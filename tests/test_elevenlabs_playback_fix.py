@@ -197,7 +197,7 @@ def test_6_full_wake_word_command_pipeline():
     companion = AiraDesktopCompanion()
 
     captured_speech = []
-    def mock_speak(text: str, request_id: str = None):
+    def mock_speak(text: str, request_id: str = None, **kwargs):
         captured_speech.append({"text": text, "request_id": request_id})
 
     companion.speak_text = mock_speak
@@ -276,7 +276,10 @@ def test_9_normal_companion_shutdown():
     companion = AiraDesktopCompanion()
     t = threading.Thread(target=companion.run, daemon=True)
     t.start()
-    time.sleep(0.3)
+    for _ in range(30):
+        if companion._running:
+            break
+        time.sleep(0.1)
 
     assert companion._running is True
 

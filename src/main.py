@@ -28,6 +28,7 @@ from src.evaluation.eval_runner import run_benchmark_evaluation
 from src.config import AIRA_STORAGE_DIR
 from src.voice import get_voice_service, clean_text_for_speech
 from src.voice.providers import get_available_macos_voices
+from src.voice.live_provider import GeminiLiveVoiceProvider
 
 app = FastAPI(
     title=f"Project {ASSISTANT_NAME} API",
@@ -91,6 +92,10 @@ class ResearchRequest(BaseModel):
     query: str
     privacy_mode: Optional[str] = "standard"
     max_results: int = 4
+
+class VoiceInterruptRequest(BaseModel):
+    session_id: Optional[str] = None
+    reason: Optional[str] = "barge_in"
 
 # ------------------------------------------------------------------------------
 # Health and Runtime State
@@ -373,6 +378,10 @@ async def get_voice_config():
         ],
         "local_asr_ready": voice_service.local_stt.is_ready(),
         "tts_available": True,
+        "live_mode_available": GeminiLiveVoiceProvider.is_available(),
+        "live_default_model": GeminiLiveVoiceProvider.DEFAULT_MODEL,
+        "live_default_voice": GeminiLiveVoiceProvider.DEFAULT_VOICE,
+        "active_voice_mode": os.getenv("AIRA_VOICE_MODE", "live" if GeminiLiveVoiceProvider.is_available() else "chained"),
     }
 
 @app.post("/api/voice/transcribe")
@@ -419,6 +428,8 @@ async def transcribe_voice(
             "provider_used": "faster-whisper-local" if privacy_mode == "local_only" else "google-speech-remote",
             "success": bool(result.text.strip()),
             "trace_id": trace_id,
+            "sample_count": getattr(result, "sample_count", 0),
+            "diagnostics": getattr(result, "diagnostics", None),
         }
     except ValueError as ve:
         logger.warning(f"[{trace_id}] Invalid audio payload: {ve}")
@@ -498,6 +509,13 @@ async def stop_voice_playback():
     """Immediately stops active speech synthesis and cancels background say processes."""
     voice_service.stop_speech()
     return {"status": "stopped", "interrupted": True}
+
+@app.post("/api/voice/interrupt")
+async def interrupt_voice_playback(req: Optional[VoiceInterruptRequest] = None):
+    """Immediately halts active speech synthesis and signals interruption."""
+    voice_service.stop_speech()
+    sess = req.session_id if req else None
+    return {"status": "interrupted", "success": True, "session_id": sess}
 
 # ------------------------------------------------------------------------------
 # Grounded Knowledge and Research Endpoints

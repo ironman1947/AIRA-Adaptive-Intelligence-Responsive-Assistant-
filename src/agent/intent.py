@@ -50,6 +50,22 @@ GREETING_PATTERNS = [
 
 CONTINUATION_PATTERNS = [
     re.compile(r"\b(let'?s\s+continue|continue\s+from|pick\s+up\s+where|where\s+were\s+we|what\s+was\s+i\s+doing|resume|next\s+step)\b", re.IGNORECASE),
+    re.compile(r"\b(tell\s+me\s+more(\s+about)?(\s+that)?|elaborate(\s+on)?|explain\s+that(\s+with\s+an\s+example|\s+further)?|can\s+you\s+explain\s+that)\b", re.IGNORECASE),
+    re.compile(r"\b(make\s+(it|that)\s+(shorter|longer|simpler|more\s+concise|brief|detailed|quicker))\b", re.IGNORECASE),
+    re.compile(r"\b(explain\s+(it|that|this)\s+(more\s+simply|simply|in\s+simpler\s+terms))\b", re.IGNORECASE),
+    re.compile(r"\b(the\s+(second|first|third|last|previous|next)\s+(story|one|point|item|article|news|topic))\b", re.IGNORECASE),
+    re.compile(r"\b(what\s+about\s+(that|the\s+other|the\s+second|it)|how\s+about\s+(that|it))\b", re.IGNORECASE),
+    re.compile(r"\b((give|provide)\s+me\s+(another|an)\s+example|explain\s+(the\s+first|the\s+second|that)\s+one(\s+again)?|what\s+did\s+you\s+mean\s+by\s+that)\b", re.IGNORECASE),
+    re.compile(r"\b(what\s+should\s+i\s+(learn|do|start\s+with|read)\s+(first|next|after\s+this|after\s+that))\b", re.IGNORECASE),
+    re.compile(r"\b(no,?\s+something\s+(simpler|different|more\s+practical|easier))\b", re.IGNORECASE),
+]
+
+SHORT_ACKNOWLEDGMENT_PATTERNS = [
+    re.compile(r"^\s*(yeah|yes|yep|sure|ok|okay|no|nope|nah|not\s+really|you\s+too|sounds\s+good|got\s+it|understood|alright|thanks|thank\s+you)[\s!.,?]*$", re.IGNORECASE),
+]
+
+AMBIGUOUS_KEYWORD_PATTERNS = [
+    re.compile(r"^\s*(youtube|spotify|netflix|google|safari|chrome|slack|discord|reddit|twitter|github)[\s!.,?]*$", re.IGNORECASE),
 ]
 
 FRUSTRATION_PATTERNS = [
@@ -108,7 +124,7 @@ CODING_TECHNICAL_PATTERNS = [
 
 GENERAL_KNOWLEDGE_PATTERNS = [
     re.compile(r"^(why\s+do\s+|how\s+do\s+|what\s+is\s+(the\s+|a\s+|an\s+)?(history|meaning|cause|distance|speed|capital|origin|system|definition|concept|theory|principle)\s+of|who\s+(was|wrote|discovered|invented|painted)|explain\s+|tell\s+me\s+about\s+|how\s+does\s+.*\s+work)\b", re.IGNORECASE),
-    re.compile(r"^(what\s+is\s+(a\s+|an\s+|the\s+)?(system\s+of\s+time|relativity|quantum|gravity|entropy|photosynthesis|calculus|evolution|dna|rna))\b", re.IGNORECASE),
+    re.compile(r"^(what\s+is\s+(a\s+|an\s+|the\s+)?(system\s+of\s+time|relativity|quantum|gravity|entropy|photosynthesis|calculus|evolution|dna|rna|machine\s+learning|deep\s+learning|artificial\s+intelligence|rag|ai))\b", re.IGNORECASE),
 ]
 
 def analyze_conversational_intent(prompt: str, active_project_id: Optional[str] = None) -> ConversationalIntent:
@@ -211,14 +227,34 @@ def analyze_conversational_intent(prompt: str, active_project_id: Optional[str] 
                 tone_guidance="Match the user's enthusiasm with warm celebration (e.g. 'That is awesome! Getting it to work after all that effort feels fantastic.'). Offer an optional, relevant next step if they want to continue."
             )
 
-    # 3. Check for Continuation
+    # 2.5 Check for Short Acknowledgments / Conversational Follow-up Replies (e.g. "Yeah.", "You too.")
+    for pat in SHORT_ACKNOWLEDGMENT_PATTERNS:
+        if pat.search(text):
+            return ConversationalIntent(
+                category=IntentCategory.CASUAL,
+                suggested_complexity="LOW",
+                needs_project_context=False,
+                tone_guidance="The user provided a short acknowledgement or natural conversational reply. Interpret this in the direct context of the immediately preceding assistant turn. Do not introduce yourself or generate generic greetings."
+            )
+
+    # 2.6 Check for Ambiguous Single-Keyword App/Brand Utterances (e.g. "YouTube.")
+    for pat in AMBIGUOUS_KEYWORD_PATTERNS:
+        if pat.search(text):
+            return ConversationalIntent(
+                category=IntentCategory.CASUAL,
+                suggested_complexity="LOW",
+                needs_project_context=False,
+                tone_guidance=f"The user said only the isolated keyword '{text}'. Politely clarify whether they would like you to open the application or discuss topics related to it, without inventing unrequested actions."
+            )
+
+    # 3. Check for Continuation & Contextual Follow-ups
     for pat in CONTINUATION_PATTERNS:
         if pat.search(text):
             return ConversationalIntent(
                 category=IntentCategory.CONTINUATION,
                 suggested_complexity="MEDIUM",
                 needs_project_context=True,
-                tone_guidance="Retrieve the recent context or active project state and continue seamlessly. If multiple unrelated tasks exist, ask one concise clarifying question."
+                tone_guidance="Retrieve recent conversation context and continue seamlessly. Resolve pronouns and references (e.g., 'that', 'the second story', 'make it shorter') using the immediately preceding assistant message."
             )
 
     # 5. Check for Coding / Technical
@@ -249,7 +285,7 @@ def analyze_conversational_intent(prompt: str, active_project_id: Optional[str] 
                 category=IntentCategory.GENERAL_KNOWLEDGE,
                 suggested_complexity="HEAVY",
                 needs_project_context=False,
-                tone_guidance="Provide a clear, engaging, and well-grounded explanation. Do not frame this as a software engineering problem."
+                tone_guidance="Directly explain the concept requested without any greetings, pleasantries, or self-introductions. Begin the factual explanation immediately."
             )
 
     # 8. Check for Creative or Planning

@@ -241,26 +241,71 @@ class FasterWhisperSTTProvider(SpeechToTextProvider):
     async def transcribe(self, audio: AudioChunk, language: Optional[str] = None) -> TranscriptionResult:
         import io
         import wave
+        import math
         import numpy as np
 
         start_time = time.time()
         if not audio or not audio.data:
-            return TranscriptionResult(text="", confidence=0.0, is_final=True, duration_ms=0.0)
+            return TranscriptionResult(
+                text="",
+                confidence=0.0,
+                is_final=True,
+                duration_ms=0.0,
+                sample_count=0,
+                diagnostics={"sample_rate": 16000, "channels": 1, "sample_count": 0, "duration_sec": 0.0, "rms_energy": 0.0, "clipping_count": 0, "silence_ratio": 1.0}
+            )
 
         # 1. Convert and validate audio into 16kHz mono PCM WAV
         pcm_wav_bytes = convert_audio_to_pcm_wav(audio.data, target_sample_rate=16000)
 
-        # 2. Extract float32 audio array directly in-memory (no temporary disk file)
+        # 2. Extract int16 and float32 audio array directly in-memory (no temporary disk file)
         with wave.open(io.BytesIO(pcm_wav_bytes), "rb") as wf:
             n_frames = wf.getnframes()
             if n_frames == 0:
-                return TranscriptionResult(text="", confidence=0.0, is_final=True, duration_ms=0.0)
+                return TranscriptionResult(
+                    text="",
+                    confidence=0.0,
+                    is_final=True,
+                    duration_ms=0.0,
+                    sample_count=0,
+                    diagnostics={"sample_rate": 16000, "channels": 1, "sample_count": 0, "duration_sec": 0.0, "rms_energy": 0.0, "clipping_count": 0, "silence_ratio": 1.0}
+                )
             raw_frames = wf.readframes(n_frames)
-            audio_np = np.frombuffer(raw_frames, dtype=np.int16).astype(np.float32) / 32768.0
+            raw_int16 = np.frombuffer(raw_frames, dtype=np.int16)
+            sample_count = len(raw_int16)
+            audio_np = raw_int16.astype(np.float32) / 32768.0
+
+        # 3. Compute sample-accurate audio diagnostics
+        duration_sec = sample_count / 16000.0
+        rms_energy = float(np.sqrt(np.mean(raw_int16.astype(np.float64)**2))) if sample_count > 0 else 0.0
+        clipping_count = int(np.sum((raw_int16 >= 32767) | (raw_int16 <= -32768)))
+        if sample_count >= 320:
+            n_chunks = sample_count // 320
+            chunks = raw_int16[:n_chunks * 320].reshape(n_chunks, 320).astype(np.float64)
+            chunk_rms = np.sqrt(np.mean(chunks**2, axis=1))
+            silence_ratio = float(np.mean(chunk_rms < 300.0))
+        else:
+            silence_ratio = 1.0 if rms_energy < 300.0 else 0.0
+
+        diagnostics = {
+            "sample_rate": 16000,
+            "channels": 1,
+            "sample_count": sample_count,
+            "duration_sec": round(duration_sec, 3),
+            "rms_energy": round(rms_energy, 1),
+            "clipping_count": clipping_count,
+            "silence_ratio": round(silence_ratio, 2),
+        }
+
+        # 4. Resolve language parameter: Default to English unless explicitly configured
+        configured_lang = os.getenv("AIRA_VOICE_LANGUAGE", "en").strip()
+        if language in ("auto", None):
+            lang_param = None if configured_lang == "auto" else configured_lang
+        else:
+            lang_param = None if language == "auto" else language
 
         model = self._get_model()
         try:
-            lang_param = None if (language in ("auto", None)) else language
             segments, info = model.transcribe(
                 audio_np,
                 language=lang_param,
@@ -269,16 +314,34 @@ class FasterWhisperSTTProvider(SpeechToTextProvider):
                 word_timestamps=False,  # Skip word-level alignment for lower latency
                 condition_on_previous_text=False,  # No context needed for command transcription
             )
-            full_text = " ".join(seg.text for seg in segments).strip()
-            detected_lang = info.language if hasattr(info, "language") else "en"
+            seg_list = list(segments)
+            full_text = " ".join(seg.text for seg in seg_list).strip()
+            detected_lang = info.language if hasattr(info, "language") else (lang_param or "en")
             duration_ms = round((time.time() - start_time) * 1000, 2)
+
+            # Compute calibrated confidence from segment avg_logprob
+            if seg_list:
+                prob_list = []
+                no_speech_list = []
+                for s in seg_list:
+                    if hasattr(s, "avg_logprob") and s.avg_logprob is not None:
+                        prob_list.append(math.exp(max(s.avg_logprob, -10.0)))
+                    if hasattr(s, "no_speech_prob") and s.no_speech_prob is not None:
+                        no_speech_list.append(s.no_speech_prob)
+                calibrated_conf = float(np.mean(prob_list)) if prob_list else 0.85
+                if no_speech_list and np.mean(no_speech_list) > 0.5:
+                    calibrated_conf = min(calibrated_conf, float(1.0 - np.mean(no_speech_list)))
+            else:
+                calibrated_conf = 0.0
 
             return TranscriptionResult(
                 text=full_text,
-                confidence=float(getattr(info, "language_probability", 0.9)),
+                confidence=round(calibrated_conf, 3),
                 is_final=True,
                 language=detected_lang,
                 duration_ms=duration_ms,
+                sample_count=sample_count,
+                diagnostics=diagnostics,
             )
         except Exception as e:
             duration_ms = round((time.time() - start_time) * 1000, 2)
@@ -446,6 +509,7 @@ class ElevenLabsTextToSpeechProvider(TextToSpeechProvider):
         self._persistent_ws: Optional[Any] = None
         self._persistent_ws_voice_id: Optional[str] = None
         self._persistent_ws_model_id: Optional[str] = None
+        self._persistent_ws_last_used: float = 0.0
         self.last_tts_timing: Dict[str, Any] = {}  # filled after each stream with per-stage perf_counter timings
 
     def stop_all_speech(self):
@@ -552,10 +616,16 @@ class ElevenLabsTextToSpeechProvider(TextToSpeechProvider):
             try:
                 # --- Attempt to reuse an existing open connection ---
                 existing = self._persistent_ws
-                if (
+                now_t = time.time()
+                ws_idle_time = now_t - getattr(self, "_persistent_ws_last_used", 0.0)
+                ws_is_open = getattr(existing, "open", False) or (
                     existing is not None
                     and getattr(existing, "state", None) is not None
-                    and existing.state.value < 3  # websockets states: OPEN=1, CLOSING=2, CLOSED=3
+                    and existing.state.value < 2  # OPEN=1
+                )
+                if (
+                    ws_is_open
+                    and ws_idle_time < 18.0  # ElevenLabs idle timeout is 20s
                     and self._persistent_ws_voice_id == voice_id
                     and self._persistent_ws_model_id == model_id
                 ):
@@ -635,6 +705,7 @@ class ElevenLabsTextToSpeechProvider(TextToSpeechProvider):
 
                 t_stream_done = time.perf_counter()
                 self.last_provider_used = "elevenlabs"
+                self._persistent_ws_last_used = time.time()
 
                 # Record per-stage timing in last_metrics for the companion to report
                 ws_connect_ms = round((t_ws_ready - t_ws_connect_start) * 1000, 1) if not ws_reused else 0.0

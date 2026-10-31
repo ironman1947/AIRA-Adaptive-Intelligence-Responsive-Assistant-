@@ -6,6 +6,7 @@ persistent memory, operational constitution, and dual-engine routing.
 """
 
 import json
+import re
 import uuid
 import time
 from datetime import datetime
@@ -21,7 +22,7 @@ from src.agent.identity_handler import (
     generate_user_name_response,
     generate_introduction_response,
 )
-from src.agent.intent import IntentCategory, ConversationalIntent
+from src.agent.intent import IntentCategory, ConversationalIntent, analyze_conversational_intent
 from src.agent.router import (
     nebius_client,
     light_client,
@@ -65,6 +66,21 @@ def _save_turn(sess_id: str, prompt: str, result_text: str):
     if sess_id and prompt and result_text:
         _repo.add_conversation_message(sess_id, role="user", content=prompt)
         _repo.add_conversation_message(sess_id, role="assistant", content=result_text)
+
+def is_canned_greeting(text: str) -> bool:
+    """Checks if model output is an irrelevant canned greeting rather than answering the prompt."""
+    t = text.strip().lower()
+    markers = [
+        "it's a pleasure to meet you",
+        "pleasure to meet you",
+        "how may i assist you today",
+        "how can i assist you today",
+        "how can i help you today",
+        "i'm aira, your intelligent",
+        "i am aira, your intelligent",
+        "greetings, fellow traveler",
+    ]
+    return any(m in t for m in markers)
 
 def try_dispatch_deterministic_utility(
     prompt: str,
@@ -163,7 +179,7 @@ def try_dispatch_deterministic_utility(
             "model_used": "authoritative_identity",
             "complexity": "LOW",
             "intent_category": intent.category,
-            "target_engine": "local_identity",
+            "target_engine": "local",
             "tools_triggered": False,
             "executed_tools": [],
             "citations": [],
@@ -198,7 +214,7 @@ def try_dispatch_deterministic_utility(
             "model_used": "authoritative_identity",
             "complexity": "LOW",
             "intent_category": intent.category,
-            "target_engine": "local_identity",
+            "target_engine": "local",
             "tools_triggered": False,
             "executed_tools": [],
             "citations": [],
@@ -224,7 +240,7 @@ async def run_agent_workflow(
     """
     start_time = time.time()
     request_id = f"req_{uuid.uuid4().hex[:10]}"
-    sess_id = session_id or f"sess_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    sess_id = session_id or f"sess_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
     session_state = get_or_create_session(sess_id, project_id)
 
     active_privacy = privacy_mode or session_state.privacy_mode
@@ -283,6 +299,8 @@ async def run_agent_workflow(
         if active_privacy == "local_only" or not cloud_alive:
             err_msg = "Error: The local Ollama model is currently offline and cloud escalation is prohibited by your privacy policy."
             _save_turn(sess_id, prompt, err_msg)
+            duration_ms = round((time.time() - start_time) * 1000, 2)
+            print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: local | Model: {active_light_model} | Tools: none | Duration: {duration_ms}ms")
             return {
                 "request_id": request_id,
                 "model_used": active_light_model,
@@ -295,12 +313,14 @@ async def run_agent_workflow(
                 "result": err_msg,
                 "routing_reason": "Local model offline; cloud fallback disabled.",
                 "runtime_state": runtime_state.to_dict(),
-                "duration_ms": round((time.time() - start_time) * 1000, 2),
+                "duration_ms": duration_ms,
             }
 
     if not cloud_alive and not local_alive:
         err_msg = "Error: Both local and cloud model engines are currently offline. Please check your network or local Ollama service."
         _save_turn(sess_id, prompt, err_msg)
+        duration_ms = round((time.time() - start_time) * 1000, 2)
+        print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: offline | Model: None | Tools: none | Duration: {duration_ms}ms")
         return {
             "request_id": request_id,
             "model_used": "None",
@@ -313,7 +333,30 @@ async def run_agent_workflow(
             "result": err_msg,
             "routing_reason": "All model providers unreachable.",
             "runtime_state": runtime_state.to_dict(),
-            "duration_ms": round((time.time() - start_time) * 1000, 2),
+            "duration_ms": duration_ms,
+        }
+
+    # Privacy Guardrail for Web Research: Local-only mode prohibits external network queries
+    if intent.category == IntentCategory.WEB_RESEARCH and active_privacy == "local_only":
+        err_msg = "Live web research is blocked because Local-Only Privacy Mode is active. To enable live research, please switch your privacy setting to Standard."
+        _save_turn(sess_id, prompt, err_msg)
+        duration_ms = round((time.time() - start_time) * 1000, 2)
+        print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: local | Model: privacy_guardrail | Tools: none | Duration: {duration_ms}ms")
+        return {
+            "request_id": request_id,
+            "model_used": "privacy_guardrail",
+            "complexity": complexity,
+            "intent_category": intent.category,
+            "target_engine": "local",
+            "tools_triggered": False,
+            "executed_tools": [],
+            "citations": [],
+            "sources_used": [],
+            "contradictions": [],
+            "result": err_msg,
+            "routing_reason": "Live web research blocked by Local-Only Privacy Policy.",
+            "runtime_state": runtime_state.to_dict(),
+            "duration_ms": duration_ms,
         }
 
     # 3. Intent-Aware Context Retrieval (Retrieve ONLY what is relevant)
@@ -328,25 +371,30 @@ async def run_agent_workflow(
     # Ambiguous continuation check:
     # If the user asks to continue but multiple projects exist and none is clearly active
     if intent.category == IntentCategory.CONTINUATION and not active_proj_id:
-        all_projs = _project_mgr.list_projects()
-        if len(all_projs) > 1:
-            proj_names = [f"'{p.name}'" for p in all_projs[:3]]
-            clarify_text = f"I'd be glad to pick back up! We have active work across {', '.join(proj_names)}. Which one would you like to continue with?"
-            _save_turn(sess_id, prompt, clarify_text)
-            return {
-                "request_id": request_id,
-                "model_used": active_light_model,
-                "complexity": "LOW",
-                "intent_category": intent.category,
-                "target_engine": "local",
-                "tools_triggered": False,
-                "executed_tools": [],
-                "citations": [],
-                "result": clarify_text,
-                "routing_reason": "Ambiguous continuation: asked for clarification.",
-                "runtime_state": runtime_state.to_dict(),
-                "duration_ms": round((time.time() - start_time) * 1000, 2),
-            }
+        conv_history_check = _repo.get_conversation_history(sess_id, limit=2)
+        is_project_resumption = bool(re.search(r"\b(let'?s\s+continue|continue\s+from|pick\s+up\s+where|where\s+were\s+we|resume\s+work|what\s+was\s+i\s+doing)\b", prompt, re.IGNORECASE))
+        if is_project_resumption and not conv_history_check:
+            all_projs = _project_mgr.list_projects()
+            if len(all_projs) > 1:
+                proj_names = [f"'{p.name}'" for p in all_projs[:3]]
+                clarify_text = f"I'd be glad to pick back up! We have active work across {', '.join(proj_names)}. Which one would you like to continue with?"
+                _save_turn(sess_id, prompt, clarify_text)
+                duration_ms = round((time.time() - start_time) * 1000, 2)
+                print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: local | Model: {active_light_model} | Tools: none | Duration: {duration_ms}ms")
+                return {
+                    "request_id": request_id,
+                    "model_used": active_light_model,
+                    "complexity": "LOW",
+                    "intent_category": intent.category,
+                    "target_engine": "local",
+                    "tools_triggered": False,
+                    "executed_tools": [],
+                    "citations": [],
+                    "result": clarify_text,
+                    "routing_reason": "Ambiguous continuation: asked for clarification.",
+                    "runtime_state": runtime_state.to_dict(),
+                    "duration_ms": duration_ms,
+                }
 
     # 3.5 Gather Grounded Knowledge across RAG, Web Research, Memory, and Project Context
     knowledge_bundle: Optional[KnowledgeBundle] = None
@@ -357,6 +405,36 @@ async def run_agent_workflow(
             privacy_mode=active_privacy,
             intent=intent,
         )
+
+    # Honest failure report: If web research was explicitly requested but 0 sources were retrieved
+    if intent.category == IntentCategory.WEB_RESEARCH and (not knowledge_bundle or not knowledge_bundle.web_sources):
+        fail_msg = "I attempted to research this topic online, but was unable to retrieve live web sources at this time. In accordance with AIRA's factual grounding policy, I will not synthesize an answer without verified sources."
+        _save_turn(sess_id, prompt, fail_msg)
+        duration_ms = round((time.time() - start_time) * 1000, 2)
+        print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: {target_engine} | Model: research_engine | Tools: web_search | Duration: {duration_ms}ms")
+        return {
+            "request_id": request_id,
+            "model_used": "research_engine",
+            "complexity": complexity,
+            "intent_category": intent.category,
+            "target_engine": target_engine,
+            "tools_triggered": True,
+            "executed_tools": [{
+                "tool": "web_search",
+                "decision": "ALLOW",
+                "risk_level": "LOW",
+                "queries": knowledge_bundle.decision.search_queries if knowledge_bundle else [prompt],
+                "sources_found": 0,
+                "status": "failed_or_no_results",
+            }],
+            "citations": [],
+            "sources_used": [],
+            "contradictions": [],
+            "result": fail_msg,
+            "routing_reason": "Web research retrieval returned 0 sources; reported retrieval failure honestly.",
+            "runtime_state": runtime_state.to_dict(),
+            "duration_ms": duration_ms,
+        }
 
     # Query semantic memories ONLY if relevant (not for greetings/casual chit-chat)
     matched_memories = []
@@ -391,6 +469,22 @@ async def run_agent_workflow(
 
     # 5. Execution Phase
     executed_tools = []
+    if knowledge_bundle and knowledge_bundle.web_sources:
+        executed_tools.append({
+            "tool": "web_search",
+            "decision": "ALLOW",
+            "risk_level": "LOW",
+            "queries": knowledge_bundle.decision.search_queries,
+            "sources_found": len(knowledge_bundle.web_sources),
+        })
+    if knowledge_bundle and knowledge_bundle.rag_chunks:
+        executed_tools.append({
+            "tool": "rag_document_search",
+            "decision": "ALLOW",
+            "risk_level": "LOW",
+            "chunks_found": len(knowledge_bundle.rag_chunks),
+        })
+
     citations = []
     approval_needed = False
     pending_approval_details = None
@@ -409,21 +503,6 @@ async def run_agent_workflow(
                 temperature=0.6 if intent.category == IntentCategory.CREATIVE else 0.4,
             )
             raw_content = response.choices[0].message.content or ""
-
-            # Guardrail: Check if the model hallucinated an irrelevant generic greeting
-            def is_canned_greeting(text: str) -> bool:
-                t = text.strip().lower()
-                markers = [
-                    "it's a pleasure to meet you",
-                    "pleasure to meet you",
-                    "how may i assist you today",
-                    "how can i assist you today",
-                    "how can i help you today",
-                    "i'm aira, your intelligent",
-                    "i am aira, your intelligent",
-                    "greetings, fellow traveler",
-                ]
-                return any(m in t for m in markers)
 
             if intent.category not in (IntentCategory.GREETING, IntentCategory.USER_INTRODUCTION) and (not raw_content.strip() or is_canned_greeting(raw_content)):
                 if cloud_alive and active_privacy != "local_only":
@@ -466,6 +545,31 @@ async def run_agent_workflow(
                     _, valid_cites, _ = knowledge_bundle.validate_answer_citations(result_text)
                     local_citations = list(dict.fromkeys(knowledge_bundle.citations + valid_cites))
 
+                duration_ms = round((time.time() - start_time) * 1000, 2)
+                tool_names = ", ".join(t["tool"] for t in executed_tools) if executed_tools else "none"
+                print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: local | Model: {active_light_model} | Tools: {tool_names} | Duration: {duration_ms}ms")
+
+                return {
+                    "request_id": request_id,
+                    "model_used": active_light_model,
+                    "complexity": complexity,
+                    "intent_category": intent.category,
+                    "target_engine": "local",
+                    "tools_triggered": bool(executed_tools),
+                    "executed_tools": executed_tools,
+                    "citations": local_citations,
+                    "sources_used": knowledge_bundle.sources_used if knowledge_bundle else [],
+                    "contradictions": knowledge_bundle.contradictions if knowledge_bundle else [],
+                    "result": result_text,
+                    "routing_reason": routing_info["reason"],
+                    "runtime_state": runtime_state.to_dict(),
+                    "duration_ms": duration_ms,
+                }
+        except Exception as e:
+            print(f"⚠️ Local engine error ({e}); attempting cloud escalation fallback if permitted...")
+            if active_privacy == "local_only" or not cloud_alive:
+                duration_ms = round((time.time() - start_time) * 1000, 2)
+                print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: local | Model: {active_light_model} | Tools: none | Duration: {duration_ms}ms")
                 return {
                     "request_id": request_id,
                     "model_used": active_light_model,
@@ -474,26 +578,10 @@ async def run_agent_workflow(
                     "target_engine": "local",
                     "tools_triggered": False,
                     "executed_tools": [],
-                    "citations": local_citations,
-                    "sources_used": knowledge_bundle.sources_used if knowledge_bundle else [],
-                    "contradictions": knowledge_bundle.contradictions if knowledge_bundle else [],
-                    "result": result_text,
-                    "routing_reason": routing_info["reason"],
-                    "runtime_state": runtime_state.to_dict(),
-                    "duration_ms": round((time.time() - start_time) * 1000, 2),
-                }
-        except Exception as e:
-            print(f"⚠️ Local engine error ({e}); attempting cloud escalation fallback if permitted...")
-            if active_privacy == "local_only" or not cloud_alive:
-                return {
-                    "request_id": request_id,
-                    "model_used": active_light_model,
-                    "complexity": complexity,
-                    "intent_category": intent.category,
-                    "target_engine": "local",
-                    "tools_triggered": False,
+                    "citations": [],
                     "result": f"Local model error: {str(e)}. Cloud fallback prohibited by Local-Only privacy mode.",
                     "runtime_state": runtime_state.to_dict(),
+                    "duration_ms": duration_ms,
                 }
 
     # --- Heavy / Cloud Route (Nemotron via OpenRouter/Nebius) ---
@@ -524,28 +612,88 @@ async def run_agent_workflow(
         # Fallback to local model if cloud fails
         if local_alive:
             print(f"⚠️ Cloud engine error ({e}); falling back to Local Gemma...")
+            if intent.category == IntentCategory.DESKTOP_ACTION:
+                m = re.search(r"\b(?:open|launch|start)\s+([a-zA-Z0-9_\-\s]+?)(?:[\.!?]|$)", prompt, re.IGNORECASE)
+                app_name = m.group(1).strip() if m else "Safari"
+                raw_args = {"app_name": app_name}
+                decision, risk, reason = _policy_engine.evaluate_action(
+                    action_type="DESKTOP_ACTION",
+                    tool_name="desktop_open_application",
+                    parameters=raw_args,
+                    request_id=request_id,
+                    privacy_mode=active_privacy,
+                    authorized_root=str(BASE_DIR),
+                    pre_approved=pre_approved_action,
+                )
+                if decision == "REQUIRE_APPROVAL":
+                    approval_id = f"appr_{uuid.uuid4().hex[:8]}"
+                    pending_approval_details = _policy_engine.register_approval_request(
+                        approval_id=approval_id,
+                        tool_name="desktop_open_application",
+                        parameters=raw_args,
+                        reason=reason,
+                        risk_level=risk,
+                    )
+                    return {
+                        "request_id": request_id,
+                        "model_used": "desktop_policy_engine",
+                        "complexity": complexity,
+                        "intent_category": intent.category,
+                        "target_engine": "local_fallback",
+                        "tools_triggered": True,
+                        "executed_tools": [{
+                            "tool": "desktop_open_application",
+                            "risk_level": risk,
+                            "decision": decision,
+                            "reason": reason,
+                            "arguments": raw_args,
+                        }],
+                        "citations": [],
+                        "approval_required": True,
+                        "pending_approval": pending_approval_details,
+                        "result": f"Action requires confirmation: Open application '{app_name}'. Reason: {reason}",
+                        "routing_reason": "Desktop operation evaluated via security policy engine under cloud rate-limit fallback.",
+                        "runtime_state": runtime_state.to_dict(),
+                        "duration_ms": round((time.time() - start_time) * 1000, 2),
+                    }
+
             fallback_resp = await cur_light_client.chat.completions.create(
                 model=active_light_model,
                 messages=messages,
-                temperature=0.5,
+                temperature=0.4,
             )
             fallback_text = fallback_resp.choices[0].message.content or ""
+            if intent.category not in (IntentCategory.GREETING, IntentCategory.USER_INTRODUCTION) and (not fallback_text.strip() or is_canned_greeting(fallback_text)):
+                strict_messages = [
+                    {"role": "system", "content": "You are AIRA, an intelligent voice assistant. Directly answer the user's inquiry with facts and explanation. Do NOT greet, introduce yourself, or ask how to help."},
+                    {"role": "user", "content": prompt}
+                ]
+                retry_resp = await cur_light_client.chat.completions.create(
+                    model=active_light_model,
+                    messages=strict_messages,
+                    temperature=0.3,
+                )
+                fallback_text = retry_resp.choices[0].message.content or fallback_text
             _save_turn(sess_id, prompt, fallback_text)
             session_state.interaction_count += 1
+            duration_ms = round((time.time() - start_time) * 1000, 2)
+            tool_names = ", ".join(t["tool"] for t in executed_tools) if executed_tools else "none"
+            print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: local_fallback | Model: {active_light_model} | Tools: {tool_names} | Duration: {duration_ms}ms")
             return {
                 "request_id": request_id,
                 "model_used": f"{active_light_model} (Cloud Fallback)",
                 "complexity": complexity,
                 "intent_category": intent.category,
                 "target_engine": "local_fallback",
-                "tools_triggered": False,
-                "executed_tools": [],
+                "tools_triggered": bool(executed_tools),
+                "executed_tools": executed_tools,
                 "citations": [],
                 "approval_required": False,
                 "pending_approval": None,
                 "result": fallback_text,
                 "routing_reason": f"Cloud provider unavailable ({str(e)}); gracefully served locally.",
                 "runtime_state": runtime_state.to_dict(),
+                "duration_ms": duration_ms,
             }
         raise
 
@@ -661,13 +809,17 @@ async def run_agent_workflow(
             _, valid_cites, _ = knowledge_bundle.validate_answer_citations(final_text)
             all_cloud_citations = list(dict.fromkeys(all_cloud_citations + valid_cites))
 
+        duration_ms = round((time.time() - start_time) * 1000, 2)
+        tool_names = ", ".join(t["tool"] for t in executed_tools) if executed_tools else "none"
+        print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: cloud | Model: {HEAVY_MODEL} | Tools: {tool_names} | Duration: {duration_ms}ms")
+
         return {
             "request_id": request_id,
             "model_used": HEAVY_MODEL,
             "complexity": complexity,
             "intent_category": intent.category,
             "target_engine": "cloud",
-            "tools_triggered": True,
+            "tools_triggered": bool(executed_tools),
             "executed_tools": executed_tools,
             "citations": all_cloud_citations,
             "sources_used": knowledge_bundle.sources_used if knowledge_bundle else [],
@@ -677,7 +829,7 @@ async def run_agent_workflow(
             "approval_required": approval_needed,
             "pending_approval": pending_approval_details,
             "runtime_state": runtime_state.to_dict(),
-            "duration_ms": round((time.time() - start_time) * 1000, 2),
+            "duration_ms": duration_ms,
         }
 
     # No tools used
@@ -690,14 +842,18 @@ async def run_agent_workflow(
         _, valid_cites, _ = knowledge_bundle.validate_answer_citations(cloud_answer)
         cloud_direct_citations = list(dict.fromkeys(knowledge_bundle.citations + valid_cites))
 
+    duration_ms = round((time.time() - start_time) * 1000, 2)
+    tool_names = ", ".join(t["tool"] for t in executed_tools) if executed_tools else "none"
+    print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: cloud | Model: {HEAVY_MODEL} | Tools: {tool_names} | Duration: {duration_ms}ms")
+
     return {
         "request_id": request_id,
         "model_used": HEAVY_MODEL,
         "complexity": complexity,
         "intent_category": intent.category,
         "target_engine": "cloud",
-        "tools_triggered": False,
-        "executed_tools": [],
+        "tools_triggered": bool(executed_tools),
+        "executed_tools": executed_tools,
         "citations": cloud_direct_citations,
         "sources_used": knowledge_bundle.sources_used if knowledge_bundle else [],
         "contradictions": knowledge_bundle.contradictions if knowledge_bundle else [],
@@ -705,7 +861,7 @@ async def run_agent_workflow(
         "routing_reason": routing_info["reason"],
         "approval_required": False,
         "runtime_state": runtime_state.to_dict(),
-        "duration_ms": round((time.time() - start_time) * 1000, 2),
+        "duration_ms": duration_ms,
     }
 
 def get_shared_repository() -> MemoryRepository:

@@ -7,7 +7,7 @@ from src.agent.router import determine_complexity, route_request
 async def test_deterministic_realtime_routing():
     # Real-time / search queries must route to HEAVY for web search tools
     assert await determine_complexity("What is the current news today?") == "HEAVY"
-    assert await determine_complexity("What time is it right now?") == "HEAVY"
+    assert await determine_complexity("Find the latest news on AI") == "HEAVY"
     assert await determine_complexity("Search for latest Python PEP releases") == "HEAVY"
 
 @pytest.mark.asyncio

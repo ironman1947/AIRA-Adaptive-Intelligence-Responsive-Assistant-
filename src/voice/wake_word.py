@@ -13,8 +13,10 @@ import math
 import struct
 import threading
 from enum import Enum
-from typing import Optional, Callable, Dict, Any, List
+from typing import Optional, Callable, Dict, Any, List, Tuple
 from dataclasses import dataclass
+
+from src.voice.turn_detector import TurnDetector, VADConfig
 
 
 class WakeWordState(str, Enum):
@@ -117,10 +119,35 @@ class LocalWakeWordDetector(WakeWordDetector):
         self._on_command_captured = None
         self._on_state_change = None
         self._on_error = None
+        self._on_idle_timeout = None
+        self._on_speech_started = None
+
+        # Continuous conversation mode & VAD turn detection
+        self.mode: str = "standby"  # "standby" (keyword spotter) or "conversation" (continuous VAD turn-taking)
+        self.turn_detector: TurnDetector = TurnDetector()
+        self.is_speaking: bool = False
+        self._last_trailing_audio: Optional[bytes] = None
 
         # Audio buffers
         self._lock = threading.Lock()
         self._audio_queue: List[bytes] = []
+
+    def clear_buffers(self) -> None:
+        """Atomically drains audio queues and resets turn detector to prevent feedback loops or stale speech."""
+        with self._lock:
+            self._audio_queue.clear()
+        self.turn_detector.reset_active_listening()
+
+    def set_mode(self, mode: str) -> None:
+        """Switches between 'standby' (keyword spotting) and 'conversation' (continuous VAD turn-taking)."""
+        self.mode = mode
+        if mode == "conversation":
+            self.turn_detector.reset_active_listening()
+            self.set_state(WakeWordState.LISTENING_LOCALLY)
+        elif mode == "standby":
+            self.turn_detector.reset_active_listening()
+            self._last_trailing_audio = None
+            self.set_state(WakeWordState.LISTENING_LOCALLY)
 
     def _get_whisper_model(self):
         """Lazily initializes the persistent tiny Whisper model for local keyword spotting."""
@@ -147,6 +174,9 @@ class LocalWakeWordDetector(WakeWordDetector):
         on_command_captured: Optional[Callable[[bytes], None]] = None,
         on_state_change: Optional[Callable[[WakeWordState], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
+        on_idle_timeout: Optional[Callable[[], None]] = None,
+        on_speech_started: Optional[Callable[[], None]] = None,
+        on_live_audio_frame: Optional[Callable[[bytes], None]] = None,
     ) -> bool:
         """Starts continuous local wake-word listening on the default microphone."""
         if self._running:
@@ -156,6 +186,9 @@ class LocalWakeWordDetector(WakeWordDetector):
         self._on_command_captured = on_command_captured
         self._on_state_change = on_state_change
         self._on_error = on_error
+        self._on_idle_timeout = on_idle_timeout
+        self._on_speech_started = on_speech_started
+        self._on_live_audio_frame = on_live_audio_frame
 
         self.set_state(WakeWordState.INITIALIZING)
 
@@ -220,6 +253,21 @@ class LocalWakeWordDetector(WakeWordDetector):
                 if status and self._running:
                     pass  # CoreAudio overflow or underflow
                 pcm_bytes = (indata * 32767).astype(np.int16).tobytes()
+
+                # Anti-Feedback Gate:
+                # If assistant is actively speaking through Mac speakers, suppress microphone capture
+                # from queuing ordinary audio frames, preventing AIRA from transcribing her own voice.
+                if self.is_speaking:
+                    try:
+                        shorts = struct.unpack(f"<{len(pcm_bytes)//2}h", pcm_bytes)
+                        rms = math.sqrt(sum(s * s for s in shorts) / max(1, len(shorts)))
+                        if rms >= getattr(self.turn_detector.config, "barge_in_energy_threshold", 1400.0):
+                            with self._lock:
+                                self._audio_queue.append(pcm_bytes)
+                    except Exception:
+                        pass
+                    return
+
                 with self._lock:
                     self._audio_queue.append(pcm_bytes)
 
@@ -254,6 +302,44 @@ class LocalWakeWordDetector(WakeWordDetector):
                 # Compute RMS energy of this block
                 shorts = struct.unpack(f"<{len(chunk)//2}h", chunk)
                 rms = math.sqrt(sum(s * s for s in shorts) / max(1, len(shorts)))
+
+                if self.mode == "conversation":
+                    # Forward raw chunk to live audio stream if live provider callback registered
+                    if getattr(self, "_on_live_audio_frame", None) is not None and not self.is_speaking:
+                        try:
+                            self._on_live_audio_frame(chunk)
+                        except Exception:
+                            pass
+
+                    # Continuous Multi-Turn Conversation Mode:
+                    # Feed 20ms frames (640 bytes) to TurnDetector
+                    frame_size = 640
+                    for offset in range(0, len(chunk), frame_size):
+                        frame = chunk[offset : offset + frame_size]
+                        if len(frame) == frame_size:
+                            speech_started, utterance_completed, completed_bytes = self.turn_detector.process_frame(
+                                frame, is_assistant_speaking=self.is_speaking
+                            )
+                            if speech_started:
+                                self.set_state(WakeWordState.CAPTURING_COMMAND)
+                                if self._on_speech_started:
+                                    try:
+                                        self._on_speech_started()
+                                    except Exception as cb_err:
+                                        print(f"⚠️ [WakeWord] Error in on_speech_started callback: {cb_err}")
+                            if utterance_completed and completed_bytes:
+                                from src.voice.providers import pcm_to_wav_bytes
+                                wav_audio = pcm_to_wav_bytes(completed_bytes, sample_rate=self.SAMPLE_RATE)
+                                self.set_state(WakeWordState.RECOGNIZING_SPEECH)
+                                if self._on_command_captured:
+                                    self._on_command_captured(wav_audio)
+
+                    # Check for conversation idle timeout (e.g. 25s without speech)
+                    if self.turn_detector.is_idle_timed_out():
+                        if self._on_idle_timeout:
+                            self._on_idle_timeout()
+
+                    continue
 
                 if not capturing_command:
                     # In LISTENING_LOCALLY mode
@@ -340,7 +426,8 @@ class LocalWakeWordDetector(WakeWordDetector):
                 beam_size=1,
                 vad_filter=False,
             )
-            text = " ".join(seg.text for seg in segments).lower().strip()
+            seg_list = list(segments)
+            text = " ".join(seg.text for seg in seg_list).lower().strip()
 
             # Clean punctuation
             for ch in [".", ",", "!", "?", "'", '"', "-"]:
@@ -349,6 +436,18 @@ class LocalWakeWordDetector(WakeWordDetector):
             wake_variants = ["hey aira", "aira", "hey ira", "ayra", "hey ayra", "hi aira", "hello aira"]
             for var in wake_variants:
                 if var in text:
+                    trailing = None
+                    try:
+                        for s in seg_list:
+                            s_clean = s.text.lower().replace(".", "").replace(",", "").replace("!", "").strip()
+                            if var in s_clean:
+                                end_sample = int(s.end * self.SAMPLE_RATE * 2)
+                                if end_sample < len(pcm_bytes) - 3200:
+                                    trailing = pcm_bytes[end_sample:]
+                                break
+                    except Exception:
+                        pass
+                    self._last_trailing_audio = trailing
                     return True, var.title()
         except Exception as e:
             pass

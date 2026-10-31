@@ -22,6 +22,8 @@ class TranscriptionResult:
     is_final: bool = True
     language: str = "en"
     duration_ms: float = 0.0
+    sample_count: int = 0
+    diagnostics: Optional[Dict[str, Any]] = None
 
 @dataclass
 class VoiceState:
