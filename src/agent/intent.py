@@ -73,7 +73,7 @@ FRUSTRATION_PATTERNS = [
 ]
 
 EXCITEMENT_PATTERNS = [
-    re.compile(r"\b(it\s+finally\s+worked|finally\s+working|we\s+did\s+it|it\s+works!?|yes!+|awesome!+|hooray|hurray)\b", re.IGNORECASE),
+    re.compile(r"\b(it\s+finally\s+worked|finally\s+working|we\s+did\s+it|it\s+works!?|yes!+|awesome!+|hooray|hurray|super\s+excited|so\s+excited)\b", re.IGNORECASE),
     re.compile(r"^[A-Z\s!]{4,}!+$"),  # ALL CAPS excitement with exclamation marks e.g. "IT FINALLY WORKED!"
 ]
 
@@ -98,9 +98,9 @@ TIME_DATE_PATTERNS = [
 ]
 
 DESKTOP_ACTION_PATTERNS = [
-    re.compile(r"^\s*(open|launch|start|run|quit|close)\s+([a-zA-Z0-9_\-\s]+?)[\s!?,.]*$", re.IGNORECASE),
+    re.compile(r"^\s*(open|launch|start|run|quit|close)\s+([a-zA-Z0-9_\-\s.]+?)[\s!?,.]*$", re.IGNORECASE),
     re.compile(r"\b(open\s+(safari|chrome|terminal|notes|finder|calculator|settings|calendar|slack|vscode|code)|launch\s+(safari|chrome|terminal|notes|finder|calculator|settings|calendar|slack|vscode|code))\b", re.IGNORECASE),
-    re.compile(r"\b(open\s+https?://\S+|open\s+url\s+\S+)\b", re.IGNORECASE),
+    re.compile(r"\b(open\s+(?:https?|file)://\S+|open\s+url\s+\S+)\b", re.IGNORECASE),
     re.compile(r"\b(search\s+youtube\s+for\s+.+|play\s+.+\s+on\s+youtube|look\s+up\s+.+\s+on\s+youtube)\b", re.IGNORECASE),
     re.compile(r"\b(system\s+diagnostics|mac\s+diagnostics|show\s+running\s+apps|list\s+running\s+apps|running\s+applications)\b", re.IGNORECASE),
 ]
@@ -122,6 +122,7 @@ WEB_RESEARCH_PATTERNS = [
 CODING_TECHNICAL_PATTERNS = [
     re.compile(r"\b(def\s+\w+|function\s+\w+|class\s+\w+|import\s+\w+|async\s+def|git\s+|pytest|docker|sql|endpoint|fastapi|streamlit|traceback|syntaxerror|nullpointer|bug|stack\s*trace)\b", re.IGNORECASE),
     re.compile(r"\b(write\s+(a\s+)?([a-zA-Z0-9_-]+\s+)?(script|code|program|algorithm|class|function|test|tree|solution)|refactor|debug\s+this|fix\s+this\s+code)\b", re.IGNORECASE),
+    re.compile(r"\b(inspect\s+.*workspace|repository\s+workspace|workspace\s+files|apply\s+.*edit|fix\s+the\s+.*error|run\s+.*test|read\s+file|view\s+file|\.\./|run\s+command|rm\s+-rf|sudo\s+)\b", re.IGNORECASE),
 ]
 
 GENERAL_KNOWLEDGE_PATTERNS = [
@@ -175,6 +176,53 @@ def analyze_conversational_intent(prompt: str, active_project_id: Optional[str] 
                 tone_guidance="State the exact current system time and date clearly and concisely."
             )
 
+    # 2.1 Check for Emotional Cues (frustration or excitement should take precedence over incidental technical terms)
+    for pat in FRUSTRATION_PATTERNS:
+        if pat.search(text):
+            return ConversationalIntent(
+                category=IntentCategory.EMOTIONAL_SUPPORT,
+                emotional_cue="frustrated",
+                suggested_complexity="MEDIUM",
+                needs_project_context=True if active_project_id else False,
+                needs_coding_tools=bool(re.search(r"\b(code|build|test|script|error|bug)\b", clean_lower)),
+                tone_guidance="Acknowledge the frustration with calm, attentive empathy without overreacting or assuming to know their thoughts (e.g. 'That sounds frustrating. Let's take a breath and isolate what's failing.'). Offer to investigate methodically."
+            )
+
+    for pat in EXCITEMENT_PATTERNS:
+        if pat.search(text):
+            return ConversationalIntent(
+                category=IntentCategory.EMOTIONAL_SUPPORT,
+                emotional_cue="excited",
+                suggested_complexity="LOW",
+                needs_project_context=False,
+                tone_guidance="Match the user's enthusiasm with warm celebration (e.g. 'That is awesome! Getting it to work after all that effort feels fantastic.'). Offer an optional, relevant next step if they want to continue."
+            )
+
+    # 2.2 Check for Explicit URL Opening or YouTube Desktop Actions (priority over coding keywords in URLs)
+    for pat in [
+        re.compile(r"\b(?:open\s+(?:https?|file)://\S+|open\s+url\s+\S+)\b", re.IGNORECASE),
+        re.compile(r"\b(?:search\s+youtube\s+for\s+.+|play\s+.+\s+on\s+youtube|look\s+up\s+.+\s+on\s+youtube)\b", re.IGNORECASE),
+        re.compile(r"^\s*open\s+https?://\S+", re.IGNORECASE),
+    ]:
+        if pat.search(text):
+            return ConversationalIntent(
+                category=IntentCategory.DESKTOP_ACTION,
+                suggested_complexity="HEAVY",
+                needs_coding_tools=True,
+                tone_guidance="Propose and execute authorized desktop operations subject to policy confirmation."
+            )
+
+    # 2.7 Check for Coding / Technical (Checked before generic app launch)
+    for pat in CODING_TECHNICAL_PATTERNS:
+        if pat.search(text):
+            return ConversationalIntent(
+                category=IntentCategory.CODING_TECHNICAL,
+                suggested_complexity="HEAVY",
+                needs_project_context=True,
+                needs_coding_tools=True,
+                tone_guidance="Provide precise, methodical, and well-structured technical reasoning or code."
+            )
+
     # 3. Check for Desktop Action / Application Control
     for pat in DESKTOP_ACTION_PATTERNS:
         if pat.search(text):
@@ -203,30 +251,6 @@ def analyze_conversational_intent(prompt: str, active_project_id: Optional[str] 
                 suggested_complexity="LOW",
                 needs_project_context=False,
                 tone_guidance="Respond naturally, warmly, and concisely with a friendly greeting. Do not recite project status, technical objectives, or system statistics."
-            )
-
-    # 2. Check for Emotional Cues
-    # Frustration
-    for pat in FRUSTRATION_PATTERNS:
-        if pat.search(text):
-            return ConversationalIntent(
-                category=IntentCategory.EMOTIONAL_SUPPORT,
-                emotional_cue="frustrated",
-                suggested_complexity="MEDIUM",
-                needs_project_context=True if active_project_id else False,
-                needs_coding_tools=bool(re.search(r"\b(code|build|test|script|error|bug)\b", clean_lower)),
-                tone_guidance="Acknowledge the frustration with calm, attentive empathy without overreacting or assuming to know their thoughts (e.g. 'That sounds frustrating. Let's take a breath and isolate what's failing.'). Offer to investigate methodically."
-            )
-
-    # Excitement
-    for pat in EXCITEMENT_PATTERNS:
-        if pat.search(text):
-            return ConversationalIntent(
-                category=IntentCategory.EMOTIONAL_SUPPORT,
-                emotional_cue="excited",
-                suggested_complexity="LOW",
-                needs_project_context=False,
-                tone_guidance="Match the user's enthusiasm with warm celebration (e.g. 'That is awesome! Getting it to work after all that effort feels fantastic.'). Offer an optional, relevant next step if they want to continue."
             )
 
     # 2.5 Check for Short Acknowledgments / Conversational Follow-up Replies (e.g. "Yeah.", "You too.")
@@ -259,16 +283,6 @@ def analyze_conversational_intent(prompt: str, active_project_id: Optional[str] 
                 tone_guidance="Retrieve recent conversation context and continue seamlessly. Resolve pronouns and references (e.g., 'that', 'the second story', 'make it shorter') using the immediately preceding assistant message."
             )
 
-    # 5. Check for Coding / Technical
-    for pat in CODING_TECHNICAL_PATTERNS:
-        if pat.search(text):
-            return ConversationalIntent(
-                category=IntentCategory.CODING_TECHNICAL,
-                suggested_complexity="HEAVY",
-                needs_project_context=True,
-                needs_coding_tools=True,
-                tone_guidance="Provide precise, methodical, and well-structured technical reasoning or code."
-            )
 
     # 6. Check for System Inquiry
     for pat in SYSTEM_INQUIRY_PATTERNS:
@@ -291,7 +305,7 @@ def analyze_conversational_intent(prompt: str, active_project_id: Optional[str] 
             )
 
     # 8. Check for Creative or Planning
-    if re.search(r"\b(write\s+a\s+(story|poem|essay|song)|brainstorm|creative|name\s+for|imagine)\b", clean_lower):
+    if re.search(r"\b(write\s+(?:a|an)?\s*(?:\w+\s+)?(story|poem|essay|song|haiku)|haiku|poem|limerick|brainstorm|creative|name\s+for|imagine)\b", clean_lower):
         return ConversationalIntent(
             category=IntentCategory.CREATIVE,
             suggested_complexity="MEDIUM",

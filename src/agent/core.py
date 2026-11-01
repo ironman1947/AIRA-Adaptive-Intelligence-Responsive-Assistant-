@@ -82,6 +82,28 @@ def is_canned_greeting(text: str) -> bool:
     ]
     return any(m in t for m in markers)
 
+def generate_clock_response(prompt: str) -> str:
+    """Generates deterministic time/date string in Asia/Kolkata timezone."""
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    except Exception:
+        now = datetime.now()
+
+    time_str = now.strftime("%I:%M %p").lstrip("0")
+    date_str = now.strftime("%A, %B %d, %Y")
+
+    clean_p = prompt.lower().strip()
+    is_date_only = ("date" in clean_p or "day" in clean_p) and ("time" not in clean_p)
+    is_time_only = ("time" in clean_p) and ("date" not in clean_p) and ("day" not in clean_p)
+
+    if is_date_only:
+        return f"Today's date is {date_str}."
+    elif is_time_only:
+        return f"The current system time is {time_str} IST."
+    else:
+        return f"The current system time is {time_str} IST on {date_str}."
+
 def try_dispatch_deterministic_utility(
     prompt: str,
     intent: ConversationalIntent,
@@ -106,25 +128,7 @@ def try_dispatch_deterministic_utility(
 
     # 1. Deterministic System Time & Date Query (Local Asia/Kolkata runtime clock)
     if intent.category == IntentCategory.TIME_DATE_QUERY:
-        try:
-            from zoneinfo import ZoneInfo
-            now = datetime.now(ZoneInfo("Asia/Kolkata"))
-        except Exception:
-            now = datetime.now()
-
-        time_str = now.strftime("%I:%M %p").lstrip("0")
-        date_str = now.strftime("%A, %B %d, %Y")
-
-        clean_p = prompt.lower().strip()
-        is_date_only = ("date" in clean_p or "day" in clean_p) and ("time" not in clean_p)
-        is_time_only = ("time" in clean_p) and ("date" not in clean_p) and ("day" not in clean_p)
-
-        if is_date_only:
-            answer = f"Today's date is {date_str}."
-        elif is_time_only:
-            answer = f"The current system time is {time_str} IST."
-        else:
-            answer = f"The current system time is {time_str} IST on {date_str}."
+        answer = generate_clock_response(prompt)
 
         _save_turn(sess_id, prompt, answer)
         session_state.interaction_count += 1

@@ -54,3 +54,51 @@ async def test_benchmark_evaluation_runner():
     assert report["total_cases"] >= 5
     assert report["accuracy_pct"] >= 75.0
     assert len(report["results"]) == report["total_cases"]
+
+
+def test_realistic_command_evaluation_yaml_suite():
+    from src.evaluation.eval_runner import run_command_eval
+    from pathlib import Path
+    import json
+
+    report = run_command_eval()
+
+    assert report["total_commands"] >= 30
+    assert report["pass_rate_pct"] >= 90.0
+    assert report["failed_commands"] <= 3
+
+    # Verify report file persistence
+    saved_path = Path(report["saved_to"])
+    assert saved_path.exists()
+    with open(saved_path, "r", encoding="utf-8") as f:
+        persisted = json.load(f)
+    assert persisted["total_commands"] == report["total_commands"]
+    assert persisted["pass_rate_pct"] == report["pass_rate_pct"]
+
+    # Verify coverage of core intent categories
+    categories = report["category_accuracy"]
+    for cat in [
+        "greeting",
+        "casual",
+        "emotional_support",
+        "time_date_query",
+        "general_knowledge",
+        "continuation",
+        "web_research",
+        "coding_technical",
+        "desktop_action",
+        "system_inquiry",
+        "user_introduction",
+        "creative",
+        "planning",
+    ]:
+        assert cat in categories, f"Missing category {cat} in evaluation suite"
+        assert categories[cat] >= 80.0, f"Category {cat} accuracy below 80%: {categories[cat]}"
+
+    # Verify security policy enforcement (SSRF, traversal, shell injection)
+    security_checks = [r for r in report["results"] if r["id"].startswith("cmd_adv_")]
+    assert len(security_checks) >= 5
+    for sec_res in security_checks:
+        assert sec_res["actual_policy"] == "DENY", f"Security violation not denied: {sec_res['id']}"
+        assert sec_res["passed"] is True
+
