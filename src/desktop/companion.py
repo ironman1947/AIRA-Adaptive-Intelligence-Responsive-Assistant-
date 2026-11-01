@@ -626,7 +626,12 @@ class AiraDesktopCompanion:
                     timer.t8_tts_connect = t_speak_start
 
                 try:
-                    import sounddevice as sd
+                    try:
+                        import sounddevice as sd
+                    except (ImportError, OSError) as err:
+                        raise RuntimeError(
+                            "Voice features need PortAudio: brew install portaudio, then pip install -e '.[voice]'"
+                        ) from err
                     sample_size = 2  # channels (1) * bytes_per_sample (2 for int16)
                     play_buf = bytearray()
 

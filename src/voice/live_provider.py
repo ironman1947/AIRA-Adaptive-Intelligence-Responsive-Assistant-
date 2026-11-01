@@ -16,11 +16,12 @@ import sys
 import time
 import asyncio
 import threading
-from typing import Optional, Dict, Any, Callable, List, AsyncGenerator
+from typing import Optional, Dict, Any, Callable, List, AsyncGenerator, TYPE_CHECKING
 from zoneinfo import ZoneInfo
 from datetime import datetime
 
-import sounddevice as sd
+if TYPE_CHECKING:
+    import sounddevice as sd
 
 try:
     from google import genai
@@ -40,13 +41,19 @@ class GeminiLiveAudioPlayer:
     def __init__(self, sample_rate: int = 24000, channels: int = 1):
         self.sample_rate = sample_rate
         self.channels = channels
-        self._stream: Optional[sd.RawOutputStream] = None
+        self._stream: Optional["sd.RawOutputStream"] = None
         self._lock = threading.Lock()
         self._is_playing = False
 
     def start(self):
         with self._lock:
             if self._stream is None or not self._stream.active:
+                try:
+                    import sounddevice as sd
+                except (ImportError, OSError) as err:
+                    raise RuntimeError(
+                        "Voice features need PortAudio: brew install portaudio, then pip install -e '.[voice]'"
+                    ) from err
                 try:
                     self._stream = sd.RawOutputStream(
                         samplerate=self.sample_rate,

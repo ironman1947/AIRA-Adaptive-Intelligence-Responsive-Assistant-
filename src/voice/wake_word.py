@@ -193,7 +193,12 @@ class LocalWakeWordDetector(WakeWordDetector):
         self.set_state(WakeWordState.INITIALIZING)
 
         try:
-            import sounddevice as sd
+            try:
+                import sounddevice as sd
+            except (ImportError, OSError) as err:
+                raise RuntimeError(
+                    "Voice features need PortAudio: brew install portaudio, then pip install -e '.[voice]'"
+                ) from err
             self._running = True
             self._stream_closed = False
             self._thread = threading.Thread(target=self._audio_loop, daemon=True, name="AiraWakeWordWorker")
@@ -243,7 +248,15 @@ class LocalWakeWordDetector(WakeWordDetector):
 
     def _audio_loop(self):
         """Dedicated thread reading microphone frames and running local wake detection."""
-        import sounddevice as sd
+        try:
+            import sounddevice as sd
+        except (ImportError, OSError) as err:
+            err_msg = "Voice features need PortAudio: brew install portaudio, then pip install -e '.[voice]'"
+            self.set_state(WakeWordState.ERROR)
+            if self._on_error:
+                self._on_error(err_msg)
+            return
+
         import numpy as np
 
         try:
