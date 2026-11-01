@@ -16,7 +16,6 @@ import tempfile
 import subprocess
 import asyncio
 import httpx
-import websockets
 from pathlib import Path
 from typing import Optional, Dict, Any, List, AsyncGenerator
 
@@ -614,6 +613,7 @@ class ElevenLabsTextToSpeechProvider(TextToSpeechProvider):
             ws_reused = False
 
             try:
+                import websockets
                 # --- Attempt to reuse an existing open connection ---
                 existing = self._persistent_ws
                 now_t = time.time()

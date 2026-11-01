@@ -1,26 +1,31 @@
 [project]
-name = "hackathon-agent"
+name = "aira"
 version = "0.1.0"
 description = "AIRA: Adaptive Intelligence & Responsive Assistant"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.15.0",
+    "certifi>=2024.2.2",
+    "duckduckgo-search>=6.0.0",
     "fastapi>=0.148.0",
+    "httpx>=0.27.0",
     "huggingface-hub>=2.2.0",
+    "numpy>=1.26.0",
     "openai>=3.35.1",
     "pydantic>=2.14.1",
     "pypdf>=6.21.2",
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.4.0",
     "python-docx>=1.2.0",
     "python-dotenv>=1.2.4",
-    "uvicorn>=0.54.0",
     "requests>=2.32.0",
-    "duckduckgo-search>=6.0.0",
     "scikit-learn>=1.4.0",
-    "numpy>=1.26.0",
+    "uvicorn>=0.54.0",
 ]
+
+[project.optional-dependencies]
+voice = ["sounddevice>=0.4.6", "websockets>=12", "google-genai"]
+ui = ["streamlit>=1.40"]
+dev = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

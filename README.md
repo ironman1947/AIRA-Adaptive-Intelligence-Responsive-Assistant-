@@ -74,7 +74,7 @@ AIRA incorporates a dedicated **Conversational Intelligence Subsystem** (`src/ag
 ## 3. Directory Structure
 
 ```
-hackathon-agent/
+aira/
 ├── .env.example                          # Documented environment template with placeholders
 ├── .gitignore                            # Protected paths (.env, databases, storage, caches)
 ├── pyproject.toml                        # Project metadata, dependencies, and pytest configuration
