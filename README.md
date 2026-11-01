@@ -153,7 +153,7 @@ AIRA is governed by seven immutable operational principles enforced at the Pytho
 | **4** | **Honesty & Evidentiary Grounding** | Distinguish verified facts, citations, uncertainty, and unverified model outputs. Never claim a tool was used unless it succeeded. |
 | **5** | **Human Oversight** | Consequential operations (modifying project code, running tests, destructive actions) require explicit human approval. |
 | **6** | **Bounded Autonomy** | Operate strictly within authorized workspace bounds; cannot expand privileges or disable safeguards. Path traversal is rejected. |
-| **7** | **Reliability & Audit Accountability** | Report failures honestly and record all policy checks in an immutable, credential-redacted SQLite audit trail. |
+| **7** | **Reliability & Audit Accountability** | Report failures honestly and record all policy checks in an append-only audit trail with file-level isolation and credential redaction. |
 
 ---
 
@@ -167,27 +167,52 @@ AIRA does not attempt to simulate understanding through fabricated profile defau
 
 ---
 
-## 6. Installation & Execution (macOS)
+## 6. Installation & Execution
 
+### Standard Setup
 ```bash
+# Clone and install core packages and UI extras
+pip install -e ".[ui]"
+
 # Terminal 1: FastAPI Backend
-source .venv/bin/activate
-uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
+uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 
 # Terminal 2: Streamlit Interface
-source .venv/bin/activate
 streamlit run frontend.py --server.port 8501
 ```
 
 - Streamlit Web App: `http://localhost:8501`
-- FastAPI Documentation: `http://localhost:8080/docs`
+- FastAPI Documentation: `http://localhost:8000/docs`
+
+### Optional Voice Setup (Desktop Voice Companion)
+For live microphone capture, real-time wake-word detection, and spoken turn synthesis:
+```bash
+# macOS audio driver dependency
+brew install portaudio
+
+# Install voice extras (sounddevice, websockets, google-genai)
+pip install -e ".[voice]"
+
+# Run desktop voice companion
+python -m src.desktop.companion
+```
 
 ---
 
 ## 7. Automated Testing Results
 
-All 60 automated unit, integration, and conversational intelligence tests pass with a 100% success rate:
+The test suite contains 186 automated unit, integration, and security tests with hermetic fixtures for reliable offline and CI execution:
 
 ```
-============================== 60 passed in 3.26s ==============================
+================= 180 passed, 6 deselected, 5 warnings in ~19s =================
+```
+
+To run the offline hermetic test suite:
+```bash
+pytest -q
+```
+
+To run live integration tests requiring active external services or credentials:
+```bash
+pytest -q -m live --run-live
 ```
