@@ -148,6 +148,8 @@ def try_dispatch_deterministic_utility(
             "tools_triggered": False,
             "executed_tools": [],
             "citations": [],
+            "sources_used": [],
+            "contradictions": [],
             "result": answer,
             "routing_reason": "Direct system time/date query resolved deterministically from local runtime clock.",
             "runtime_state": runtime_state.to_dict(),
@@ -183,6 +185,8 @@ def try_dispatch_deterministic_utility(
             "tools_triggered": False,
             "executed_tools": [],
             "citations": [],
+            "sources_used": [],
+            "contradictions": [],
             "result": answer,
             "routing_reason": "Direct identity inquiry resolved via authoritative identity engine.",
             "runtime_state": runtime_state.to_dict(),
@@ -218,6 +222,8 @@ def try_dispatch_deterministic_utility(
             "tools_triggered": False,
             "executed_tools": [],
             "citations": [],
+            "sources_used": [],
+            "contradictions": [],
             "result": answer,
             "routing_reason": "User introduction recognized and saved to profile.",
             "runtime_state": runtime_state.to_dict(),
@@ -294,48 +300,7 @@ async def run_agent_workflow(
         pending_approvals=len(_policy_engine.pending_approvals),
     )
 
-    # Fast offline guardrail: If the target engine is unreachable and no fallback permitted
-    if not local_alive and (target_engine == "local" or active_privacy == "local_only"):
-        if active_privacy == "local_only" or not cloud_alive:
-            err_msg = "Error: The local Ollama model is currently offline and cloud escalation is prohibited by your privacy policy."
-            _save_turn(sess_id, prompt, err_msg)
-            duration_ms = round((time.time() - start_time) * 1000, 2)
-            print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: local | Model: {active_light_model} | Tools: none | Duration: {duration_ms}ms")
-            return {
-                "request_id": request_id,
-                "model_used": active_light_model,
-                "complexity": complexity,
-                "intent_category": intent.category,
-                "target_engine": "local",
-                "tools_triggered": False,
-                "executed_tools": [],
-                "citations": [],
-                "result": err_msg,
-                "routing_reason": "Local model offline; cloud fallback disabled.",
-                "runtime_state": runtime_state.to_dict(),
-                "duration_ms": duration_ms,
-            }
-
-    if not cloud_alive and not local_alive:
-        err_msg = "Error: Both local and cloud model engines are currently offline. Please check your network or local Ollama service."
-        _save_turn(sess_id, prompt, err_msg)
-        duration_ms = round((time.time() - start_time) * 1000, 2)
-        print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: offline | Model: None | Tools: none | Duration: {duration_ms}ms")
-        return {
-            "request_id": request_id,
-            "model_used": "None",
-            "complexity": complexity,
-            "intent_category": intent.category,
-            "target_engine": "offline",
-            "tools_triggered": False,
-            "executed_tools": [],
-            "citations": [],
-            "result": err_msg,
-            "routing_reason": "All model providers unreachable.",
-            "runtime_state": runtime_state.to_dict(),
-            "duration_ms": duration_ms,
-        }
-
+    # 2.5 Deterministic Intent Guardrails & Dialogue Clarifications (Run before model offline checks)
     # Privacy Guardrail for Web Research: Local-only mode prohibits external network queries
     if intent.category == IntentCategory.WEB_RESEARCH and active_privacy == "local_only":
         err_msg = "Live web research is blocked because Local-Only Privacy Mode is active. To enable live research, please switch your privacy setting to Standard."
@@ -359,15 +324,6 @@ async def run_agent_workflow(
             "duration_ms": duration_ms,
         }
 
-    # 3. Intent-Aware Context Retrieval (Retrieve ONLY what is relevant)
-    profile_summary = _user_profile_mgr.get_profile_prompt_summary(intent.category)
-
-    proj_summary = None
-    session_summary = None
-    if intent.needs_project_context and active_proj_id:
-        proj_summary = _project_mgr.get_project_prompt_summary(active_proj_id)
-        session_summary = _session_mgr.get_latest_session_prompt_context(active_proj_id)
-
     # Ambiguous continuation check:
     # If the user asks to continue but multiple projects exist and none is clearly active
     if intent.category == IntentCategory.CONTINUATION and not active_proj_id:
@@ -390,11 +346,68 @@ async def run_agent_workflow(
                     "tools_triggered": False,
                     "executed_tools": [],
                     "citations": [],
+                    "sources_used": [],
+                    "contradictions": [],
                     "result": clarify_text,
                     "routing_reason": "Ambiguous continuation: asked for clarification.",
                     "runtime_state": runtime_state.to_dict(),
                     "duration_ms": duration_ms,
                 }
+
+    # Fast offline guardrail: If the target engine is unreachable and no fallback permitted
+    if not local_alive and (target_engine == "local" or active_privacy == "local_only"):
+        if active_privacy == "local_only" or not cloud_alive:
+            err_msg = "Error: The local Ollama model is currently offline and cloud escalation is prohibited by your privacy policy."
+            _save_turn(sess_id, prompt, err_msg)
+            duration_ms = round((time.time() - start_time) * 1000, 2)
+            print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: local | Model: {active_light_model} | Tools: none | Duration: {duration_ms}ms")
+            return {
+                "request_id": request_id,
+                "model_used": active_light_model,
+                "complexity": complexity,
+                "intent_category": intent.category,
+                "target_engine": "local",
+                "tools_triggered": False,
+                "executed_tools": [],
+                "citations": [],
+                "sources_used": [],
+                "contradictions": [],
+                "result": err_msg,
+                "routing_reason": "Local model offline; cloud fallback disabled.",
+                "runtime_state": runtime_state.to_dict(),
+                "duration_ms": duration_ms,
+            }
+
+    if not cloud_alive and not local_alive:
+        err_msg = "Error: Both local and cloud model engines are currently offline. Please check your network or local Ollama service."
+        _save_turn(sess_id, prompt, err_msg)
+        duration_ms = round((time.time() - start_time) * 1000, 2)
+        print(f"📡 [AIRA Pipeline] ID: {request_id} | Intent: {intent.category} | Path: offline | Model: None | Tools: none | Duration: {duration_ms}ms")
+        return {
+            "request_id": request_id,
+            "model_used": "None",
+            "complexity": complexity,
+            "intent_category": intent.category,
+            "target_engine": "offline",
+            "tools_triggered": False,
+            "executed_tools": [],
+            "citations": [],
+            "sources_used": [],
+            "contradictions": [],
+            "result": err_msg,
+            "routing_reason": "All model providers unreachable.",
+            "runtime_state": runtime_state.to_dict(),
+            "duration_ms": duration_ms,
+        }
+
+    # 3. Intent-Aware Context Retrieval (Retrieve ONLY what is relevant)
+    profile_summary = _user_profile_mgr.get_profile_prompt_summary(intent.category)
+
+    proj_summary = None
+    session_summary = None
+    if intent.needs_project_context and active_proj_id:
+        proj_summary = _project_mgr.get_project_prompt_summary(active_proj_id)
+        session_summary = _session_mgr.get_latest_session_prompt_context(active_proj_id)
 
     # 3.5 Gather Grounded Knowledge across RAG, Web Research, Memory, and Project Context
     knowledge_bundle: Optional[KnowledgeBundle] = None
@@ -579,6 +592,8 @@ async def run_agent_workflow(
                     "tools_triggered": False,
                     "executed_tools": [],
                     "citations": [],
+                    "sources_used": [],
+                    "contradictions": [],
                     "result": f"Local model error: {str(e)}. Cloud fallback prohibited by Local-Only privacy mode.",
                     "runtime_state": runtime_state.to_dict(),
                     "duration_ms": duration_ms,
@@ -649,6 +664,8 @@ async def run_agent_workflow(
                             "arguments": raw_args,
                         }],
                         "citations": [],
+                        "sources_used": [],
+                        "contradictions": [],
                         "approval_required": True,
                         "pending_approval": pending_approval_details,
                         "result": f"Action requires confirmation: Open application '{app_name}'. Reason: {reason}",
@@ -688,6 +705,8 @@ async def run_agent_workflow(
                 "tools_triggered": bool(executed_tools),
                 "executed_tools": executed_tools,
                 "citations": [],
+                "sources_used": [],
+                "contradictions": [],
                 "approval_required": False,
                 "pending_approval": None,
                 "result": fallback_text,

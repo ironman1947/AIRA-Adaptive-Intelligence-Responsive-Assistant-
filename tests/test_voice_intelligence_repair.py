@@ -80,6 +80,7 @@ async def test_open_safari_approval_flow():
 # ------------------------------------------------------------------------------
 # 3. ElevenLabs Neural TTS Provider Tests
 # ------------------------------------------------------------------------------
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_elevenlabs_neural_synthesis():
     svc = get_voice_service()

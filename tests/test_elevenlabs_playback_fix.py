@@ -37,6 +37,7 @@ from src.voice.wake_word import WakeWordState
 # ------------------------------------------------------------------------------
 # Test 1: Authentication and Voice Selection
 # ------------------------------------------------------------------------------
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_1_elevenlabs_auth_and_voice_selection():
     """Confirms ElevenLabs API key and selects configured feminine voice (EXAVITQu4vr4xnSDxMaL)."""
@@ -66,6 +67,7 @@ async def test_1_elevenlabs_auth_and_voice_selection():
 # ------------------------------------------------------------------------------
 # Test 2: Short Fixed Sentence Synthesis with eleven_v4_turbo
 # ------------------------------------------------------------------------------
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_2_short_fixed_sentence_synthesis():
     """Synthesizes a short fixed sentence using eleven_v4_turbo."""
@@ -84,6 +86,7 @@ async def test_2_short_fixed_sentence_synthesis():
 # ------------------------------------------------------------------------------
 # Test 3: Audio-Format Validation
 # ------------------------------------------------------------------------------
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_3_audio_format_validation():
     """Verifies audio has 16,000 Hz sample rate, 16-bit depth, single channel (mono), valid RIFF header."""
@@ -111,6 +114,7 @@ async def test_3_audio_format_validation():
 # ------------------------------------------------------------------------------
 # Test 4: Audio Decoding and Sample-Boundary Alignment
 # ------------------------------------------------------------------------------
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_4_audio_decoding_and_sample_alignment():
     """Verifies raw audio bytes are decoded to PCM without samplesize misalignment (len % 2 == 0)."""
@@ -156,6 +160,7 @@ async def test_4_audio_decoding_and_sample_alignment():
 # ------------------------------------------------------------------------------
 # Test 5: Playback through Mac Audio Device without Samplesize Exception
 # ------------------------------------------------------------------------------
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_5_playback_through_mac_audio_device():
     """Plays generated audio through macOS audio device without raising samplesize error."""

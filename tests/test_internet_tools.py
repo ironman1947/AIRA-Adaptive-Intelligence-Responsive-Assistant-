@@ -21,6 +21,38 @@ def test_search_web_mocked():
         assert len(data["results"]) == 1
         assert data["results"][0]["url"] == "https://python.org"
 
+def test_search_web_fallback_wikipedia_and_arxiv_mocked():
+    with patch("src.tools.internet.DDGS") as mock_ddgs, patch("requests.get") as mock_get:
+        instance = mock_ddgs.return_value.__enter__.return_value
+        instance.text.return_value = []
+
+        mock_wiki = MagicMock()
+        mock_wiki.status_code = 200
+        mock_wiki.json.return_value = {
+            "query": {
+                "search": [
+                    {"title": "Python (programming language)", "snippet": "A high-level programming language."}
+                ]
+            }
+        }
+        mock_arxiv = MagicMock()
+        mock_arxiv.status_code = 200
+        mock_arxiv.text = """<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+            <entry>
+                <id>http://arxiv.org/abs/2601.12345</id>
+                <title>Python in AI</title>
+                <summary>An overview of Python in AI systems.</summary>
+            </entry>
+        </feed>"""
+        mock_get.side_effect = [mock_wiki, mock_arxiv]
+
+        output = search_web("python programming")
+        data = json.loads(output)
+        assert data["status"] == "success"
+        assert len(data["results"]) >= 1
+        assert any("wikipedia" in r["url"] for r in data["results"])
+
 def test_fetch_webpage_ssrf_blocked():
     output = fetch_webpage("http://127.0.0.1:8080/secret")
     data = json.loads(output)
