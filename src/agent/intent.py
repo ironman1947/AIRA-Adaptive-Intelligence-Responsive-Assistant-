@@ -100,6 +100,8 @@ TIME_DATE_PATTERNS = [
 DESKTOP_ACTION_PATTERNS = [
     re.compile(r"^\s*(open|launch|start|run|quit|close)\s+([a-zA-Z0-9_\-\s]+?)[\s!?,.]*$", re.IGNORECASE),
     re.compile(r"\b(open\s+(safari|chrome|terminal|notes|finder|calculator|settings|calendar|slack|vscode|code)|launch\s+(safari|chrome|terminal|notes|finder|calculator|settings|calendar|slack|vscode|code))\b", re.IGNORECASE),
+    re.compile(r"\b(open\s+https?://\S+|open\s+url\s+\S+)\b", re.IGNORECASE),
+    re.compile(r"\b(search\s+youtube\s+for\s+.+|play\s+.+\s+on\s+youtube|look\s+up\s+.+\s+on\s+youtube)\b", re.IGNORECASE),
     re.compile(r"\b(system\s+diagnostics|mac\s+diagnostics|show\s+running\s+apps|list\s+running\s+apps|running\s+applications)\b", re.IGNORECASE),
 ]
 

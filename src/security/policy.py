@@ -6,8 +6,22 @@ prior to executing any tool or operation.
 
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
+from enum import Enum
 from src.security.audit import AuditService
 from src.security.network import validate_url_security
+
+
+class ActionRisk(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class PolicyDecision(str, Enum):
+    ALLOW = "ALLOW"
+    REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
+    DENY = "DENY"
 
 class PolicyDecisionEngine:
     def __init__(self, audit_service: AuditService):
@@ -54,8 +68,8 @@ class PolicyDecisionEngine:
                     reason = f"Invalid file path syntax: {e}"
                     return "DENY", "CRITICAL", reason
 
-        # 2. Check Network Safety for URL fetching
-        if tool_name == "fetch_webpage" and "url" in parameters:
+        # 2. Check Network Safety for URL fetching and URL opening
+        if tool_name in ("fetch_webpage", "desktop_open_url", "open_url") and "url" in parameters:
             url = parameters.get("url", "")
             is_safe, error_msg = validate_url_security(url)
             if not is_safe:
@@ -64,13 +78,13 @@ class PolicyDecisionEngine:
                     action_type=action_type,
                     tool_name=tool_name,
                     target_resource=url,
-                    risk_level="HIGH",
-                    policy_decision="DENY",
+                    risk_level=ActionRisk.HIGH.value,
+                    policy_decision=PolicyDecision.DENY.value,
                     reason=reason,
                     request_id=request_id,
                     details=parameters,
                 )
-                return "DENY", "HIGH", reason
+                return PolicyDecision.DENY.value, ActionRisk.HIGH.value, reason
 
         # 3. Privacy Policy Enforcement: Local-only mode
         if privacy_mode == "local_only" and action_type in ("CLOUD_ROUTING", "EXTERNAL_API"):
@@ -101,14 +115,20 @@ class PolicyDecisionEngine:
             decision = "ALLOW"
             reason = "Medium-risk external retrieval or memory update permitted."
 
-        elif tool_name in ("desktop_open_application",):
-            risk = "MEDIUM"
+        elif tool_name in (
+            "desktop_open_application",
+            "desktop_open_url",
+            "open_url",
+            "desktop_search_youtube",
+            "search_youtube",
+        ):
+            risk = ActionRisk.MEDIUM.value
             if pre_approved:
-                decision = "ALLOW"
-                reason = "Application launch explicitly pre-approved by user."
+                decision = PolicyDecision.ALLOW.value
+                reason = "URL open or application launch explicitly pre-approved by user."
             else:
-                decision = "REQUIRE_APPROVAL"
-                reason = "Application launch requires explicit user confirmation."
+                decision = PolicyDecision.REQUIRE_APPROVAL.value
+                reason = "Opening URL or application requires explicit user confirmation."
 
         elif tool_name in ("apply_code_edit", "run_project_tests", "desktop_modify_file", "desktop_run_workspace_test"):
             risk = "HIGH"

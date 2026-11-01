@@ -13,15 +13,17 @@ class ActionCategory(str, Enum):
     MODIFY = "modify"
     DESTRUCTIVE = "destructive"
     EXTERNAL_SIDE_EFFECT = "external_side_effect"
+    OPEN_URL = "open_url"
 
     @property
     def requires_explicit_approval(self) -> bool:
         """Non-negotiable rule: Any action categorized as MODIFY, DESTRUCTIVE,
-        or EXTERNAL_SIDE_EFFECT MUST receive user confirmation before execution."""
+        EXTERNAL_SIDE_EFFECT, or OPEN_URL MUST receive user confirmation before execution."""
         return self in (
             ActionCategory.MODIFY,
             ActionCategory.DESTRUCTIVE,
             ActionCategory.EXTERNAL_SIDE_EFFECT,
+            ActionCategory.OPEN_URL,
         )
 
 
@@ -41,6 +43,8 @@ class DesktopActionPlan:
     executed_at: Optional[float] = None
     execution_result: Optional[Dict[str, Any]] = None
     verified_outcome: Optional[str] = None
+    verified: Optional[bool] = None
+    verification_detail: Optional[str] = None
     rejection_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -59,5 +63,11 @@ class DesktopActionPlan:
             "executed_at": self.executed_at,
             "execution_result": self.execution_result,
             "verified_outcome": self.verified_outcome,
+            "verified": self.verified,
+            "verification_detail": self.verification_detail,
             "rejection_reason": self.rejection_reason,
         }
+
+
+# Alias for compatibility with proposal nomenclature
+DesktopActionProposal = DesktopActionPlan

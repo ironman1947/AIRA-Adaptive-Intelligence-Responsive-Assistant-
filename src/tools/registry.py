@@ -356,6 +356,59 @@ class ToolRegistry:
             )
         )
 
+        # 15b. Desktop Open URL (Requires Approval)
+        self.register(
+            ToolDefinition(
+                name="desktop_open_url",
+                description="Open verified public URL in an approved browser with human approval requirement",
+                schema={
+                    "type": "function",
+                    "function": {
+                        "name": "desktop_open_url",
+                        "description": "Opens a verified public URL in a macOS browser (default: Safari). Requires human confirmation.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "url": {"type": "string", "description": "Public HTTP/HTTPS URL to open."},
+                                "browser": {"type": "string", "description": "Browser application name (default: Safari).", "default": "Safari"}
+                            },
+                            "required": ["url"]
+                        }
+                    }
+                },
+                handler=lambda url, browser="Safari": json.dumps(desktop_svc.propose_open_url(url, browser).to_dict()),
+                risk_level="MEDIUM",
+                action_type="MODIFY",
+            )
+        )
+
+        # 15c. Desktop Search YouTube (Requires Approval)
+        self.register(
+            ToolDefinition(
+                name="desktop_search_youtube",
+                description="Search for videos or music on YouTube with human approval requirement",
+                schema={
+                    "type": "function",
+                    "function": {
+                        "name": "desktop_search_youtube",
+                        "description": "Searches YouTube for a topic, artist, or query and opens results in the browser upon approval.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Search term or song/video query."}
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                },
+                handler=lambda query: json.dumps(
+                    desktop_svc.propose_open_url(desktop_svc.build_youtube_search_url(query), "Safari").to_dict()
+                ),
+                risk_level="MEDIUM",
+                action_type="MODIFY",
+            )
+        )
+
         # 16. Desktop Modify File (Modifying - Requires Approval & Unified Diff)
         self.register(
             ToolDefinition(

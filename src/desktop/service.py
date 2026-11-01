@@ -10,12 +10,19 @@ import time
 import difflib
 import subprocess
 import shutil
+import urllib.parse
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 
-from src.desktop.models import ActionCategory, DesktopActionPlan
+from src.desktop.models import ActionCategory, DesktopActionPlan, DesktopActionProposal
 from src.security.policy import PolicyDecisionEngine
 from src.security.audit import AuditService
+
+
+def build_youtube_search_url(query: str) -> str:
+    """Builds a safely encoded YouTube search URL."""
+    encoded_query = urllib.parse.quote_plus(query.strip())
+    return f"https://www.youtube.com/results?search_query={encoded_query}"
 
 
 class DesktopControlService:
@@ -378,6 +385,49 @@ class DesktopControlService:
 
         return plan
 
+    def build_youtube_search_url(self, query: str) -> str:
+        """Instance method helper to build a YouTube search URL."""
+        return build_youtube_search_url(query)
+
+    def propose_open_url(self, url: str, browser: str = "Safari") -> DesktopActionProposal:
+        """Constructs an action plan to open a verified public URL in an approved browser."""
+        from src.security.network import validate_url_security
+
+        is_safe, reason = validate_url_security(url)
+        if not is_safe:
+            raise PermissionError(f"URL violates security policy: {reason}")
+
+        normalized_browser = browser.strip().lower()
+        if normalized_browser in self.APPROVED_APPLICATIONS:
+            canonical_browser = self.APPROVED_APPLICATIONS[normalized_browser]
+        else:
+            canonical_browser = browser.strip() or "Safari"
+
+        plan_id = f"plan_{uuid.uuid4().hex[:8]}"
+        plan = DesktopActionPlan(
+            plan_id=plan_id,
+            tool_name="open_url",
+            category=ActionCategory.OPEN_URL,
+            description=f"Open URL '{url}' in {canonical_browser}",
+            affected_resource=url,
+            command=f"/usr/bin/open -a '{canonical_browser}' '{url}'",
+            parameters={"url": url, "browser": canonical_browser},
+            status="pending_approval",
+        )
+
+        self.active_plans[plan_id] = plan
+
+        if self.policy_engine:
+            self.policy_engine.register_approval_request(
+                approval_id=plan_id,
+                tool_name="open_url",
+                parameters=plan.parameters,
+                reason=plan.description,
+                risk_level="MEDIUM",
+            )
+
+        return plan
+
     def propose_workspace_test(self, command: str, cwd: Optional[str] = None) -> DesktopActionPlan:
         """Constructs an action plan to run a diagnostic/test command in an authorized workspace."""
         target_cwd = cwd or str(self.authorized_roots[0])
@@ -491,6 +541,79 @@ class DesktopControlService:
                 plan.execution_result = {"outcome": outcome, "returncode": 0}
 
                 return {"success": True, "plan_id": plan_id, "outcome": outcome}
+
+            elif plan.tool_name == "open_url":
+                url = plan.parameters["url"]
+                browser = plan.parameters.get("browser", "Safari")
+                cmd = ["open", "-a", browser, url]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                if proc.returncode != 0:
+                    raise RuntimeError(f"Failed opening URL in browser: {proc.stderr}")
+
+                # Verification on macOS: poll for up to 3 seconds with osascript or pgrep
+                verified = False
+                verification_detail = ""
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    v_proc = subprocess.run(
+                        ["pgrep", "-x", browser],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+                    if v_proc.returncode == 0:
+                        verified = True
+                        verification_detail = f"Process '{browser}' is running (PID: {v_proc.stdout.strip().split()[0]})."
+                        break
+                    time.sleep(0.5)
+
+                if not verified:
+                    # Fallback check using AppleScript osascript
+                    osa_proc = subprocess.run(
+                        ["osascript", "-e", f'application "{browser}" is running'],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+                    if osa_proc.returncode == 0 and "true" in osa_proc.stdout.lower():
+                        verified = True
+                        verification_detail = f"Browser '{browser}' confirmed running via System Events."
+                    else:
+                        verified = False
+                        verification_detail = f"Could not verify browser window or process '{browser}' launched within timeout."
+
+                outcome = f"URL '{url}' launched in {browser}. Verified: {verified}"
+                plan.status = "executed"
+                plan.executed_at = time.time()
+                plan.verified = verified
+                plan.verification_detail = verification_detail
+                plan.verified_outcome = outcome
+                plan.execution_result = {
+                    "outcome": outcome,
+                    "returncode": 0,
+                    "verified": verified,
+                    "verification_detail": verification_detail,
+                }
+
+                if self.audit:
+                    self.audit.record_event(
+                        action_type="DESKTOP_ACTION",
+                        tool_name="open_url",
+                        target_resource=url,
+                        risk_level="MEDIUM",
+                        policy_decision="ALLOW",
+                        reason="Executed with explicit user approval.",
+                        user_approved=True,
+                        details={"plan_id": plan_id, "browser": browser, "verified": verified},
+                    )
+
+                return {
+                    "success": True,
+                    "plan_id": plan_id,
+                    "outcome": outcome,
+                    "verified": verified,
+                    "verification_detail": verification_detail,
+                }
 
             elif plan.tool_name == "run_workspace_test":
                 command = plan.parameters["command"]
