@@ -63,6 +63,7 @@ def make_test_wav(duration_s: float = 0.5, sample_rate: int = 16000) -> bytes:
 # ------------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_1_valid_prerecorded_wav_transcription():
+    pytest.importorskip("faster_whisper", reason="needs voice extra")
     provider = FasterWhisperSTTProvider(model_size="tiny")
     wav_bytes = make_test_wav(0.4)
     chunk = AudioChunk(data=wav_bytes, sample_rate=16000, channels=1, format="wav")
@@ -76,6 +77,7 @@ async def test_1_valid_prerecorded_wav_transcription():
 # 2. Valid Audio Capture from Current Frontend Simulation
 # ------------------------------------------------------------------------------
 def test_2_valid_audio_capture_endpoint():
+    pytest.importorskip("faster_whisper", reason="needs voice extra")
     wav_bytes = make_test_wav(0.5)
     files = {"file": ("recording.wav", wav_bytes, "audio/wav")}
     data = {"language": "en", "privacy_mode": "standard"}
@@ -91,7 +93,7 @@ def test_2_valid_audio_capture_endpoint():
 # 3. Supported Compressed-Audio Input Test (WebM Opus container)
 # ------------------------------------------------------------------------------
 def test_3_supported_compressed_audio_input():
-    import av
+    av = pytest.importorskip("av", reason="needs voice extra")
     # Synthesize an in-memory WebM Opus container using PyAV
     raw_wav = make_test_wav(0.4)
     input_wav_io = io.BytesIO(raw_wav)

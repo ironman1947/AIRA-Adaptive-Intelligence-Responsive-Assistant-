@@ -36,6 +36,7 @@ from src.voice.providers import FasterWhisperSTTProvider, ElevenLabsTextToSpeech
 # ------------------------------------------------------------------------------
 # 1. Live Provider Tool Declarations and Configuration Tests
 # ------------------------------------------------------------------------------
+@pytest.mark.skipif(not GENAI_AVAILABLE, reason="google-genai not installed (pip install -e '.[voice]')")
 def test_live_provider_tool_declarations():
     """Verify tool declarations match AIRA's desktop and utility capabilities."""
     provider = GeminiLiveVoiceProvider(api_key="test_dummy_key_12345")
@@ -54,6 +55,7 @@ def test_live_provider_tool_declarations():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not GENAI_AVAILABLE, reason="google-genai not installed (pip install -e '.[voice]')")
 async def test_live_provider_tool_execution_deterministic_time():
     """Verify tool execution returns accurate IST time and date."""
     provider = GeminiLiveVoiceProvider(api_key="test_dummy_key_12345")

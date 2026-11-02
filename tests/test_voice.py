@@ -191,6 +191,7 @@ class TestVoiceAPIEndpoints:
         assert "Empty audio" in resp.json()["detail"]
 
     def test_transcribe_voice_with_dummy_wav(self):
+        pytest.importorskip("faster_whisper", reason="needs voice extra")
         dummy_wav = create_dummy_wav(0.2)
         files = {"file": ("test.wav", dummy_wav, "audio/wav")}
         data = {"language": "en", "privacy_mode": "standard"}

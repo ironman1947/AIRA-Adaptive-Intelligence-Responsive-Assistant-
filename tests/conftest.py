@@ -178,3 +178,30 @@ def mock_internet_tools(request):
         mock_get.return_value = mock_resp
 
         yield {"mock_ddgs": mock_ddgs, "mock_get": mock_get}
+
+
+@pytest.fixture(autouse=True)
+def hermetic_dns(request, monkeypatch):
+    """Makes SSRF checks deterministic: no real DNS lookups.
+
+    IP literals resolve to themselves, 'localhost' to loopback, and every other
+    hostname to a fixed public address. Tests behave the same online or offline.
+    """
+    if "live" in request.keywords:
+        return
+
+    import ipaddress
+    import socket
+
+    def _fake_getaddrinfo(host, port, *args, **kwargs):
+        name = str(host).strip("[]")
+        try:
+            ipaddress.ip_address(name)
+            ip = name
+        except ValueError:
+            ip = "127.0.0.1" if name.lower() in ("localhost", "localhost.localdomain") else "93.184.216.34"
+        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        sockaddr = (ip, 0, 0, 0) if family == socket.AF_INET6 else (ip, 0)
+        return [(family, socket.SOCK_STREAM, 6, "", sockaddr)]
+
+    monkeypatch.setattr("src.security.network.socket.getaddrinfo", _fake_getaddrinfo)
