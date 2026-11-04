@@ -313,7 +313,7 @@ def group_conversations_by_date(conversations: List[Dict[str, Any]]) -> Dict[str
     }
 
     for conv in conversations:
-        up_str = conv.get("updated_at") or conv.get("created_at") or ""
+        up_str = str(conv.get("updated_at") or conv.get("created_at") or "")
         try:
             clean_ts = up_str.replace("Z", "+00:00")
             conv_date = datetime.fromisoformat(clean_ts).date()
@@ -330,6 +330,35 @@ def group_conversations_by_date(conversations: List[Dict[str, Any]]) -> Dict[str
             groups["Older"].append(conv)
 
     return groups
+
+def resolve_engine_and_model_badge(msg: Dict[str, Any]) -> str:
+    """Safely extracts engine and model display labels from message metadata.
+
+    Handles missing keys, None values, and legacy formats gracefully without raising AttributeError.
+    """
+    raw_model = str(msg.get("model") or "").strip()
+    raw_engine = str(msg.get("engine") or "").strip().lower()
+    model_lower = raw_model.lower()
+
+    if raw_engine == "local" or "gemma" in model_lower:
+        engine_label = "Local Gemma 2B"
+    elif raw_engine == "cloud" or "nemotron" in model_lower:
+        engine_label = "Cloud Nemotron"
+    elif raw_engine:
+        engine_label = raw_engine.title()
+    elif model_lower:
+        engine_label = raw_model
+    else:
+        engine_label = "AIRA Assistant"
+
+    badge_info = engine_label
+    if raw_model and st.session_state.get("show_debug_traces", False):
+        badge_info += f" • `{raw_model}`"
+    if msg.get("tools_triggered"):
+        badge_info += " • Tool Assisted"
+
+    return badge_info
+
 
 # ------------------------------------------------------------------------------
 # Persistent Conversation & Session State Initialization
@@ -460,7 +489,8 @@ with st.sidebar:
     )
 
     # 4. Conversation History Grouped
-    all_convs = api_get(f"/api/conversations?search={conv_search_query.strip()}", [])
+    search_param = str(conv_search_query or "").strip()
+    all_convs = api_get(f"/api/conversations?search={search_param}", [])
     date_groups = group_conversations_by_date(all_convs)
 
     with st.container(height=260):
@@ -694,11 +724,7 @@ if st.session_state.active_section == "Conversation":
         with st.chat_message(role, avatar=avatar_val):
             # Engine and Model pill
             if is_assistant:
-                engine_text = msg.get("engine") or ("Local Gemma 2B" if "gemma" in msg.get("model", "").lower() else "Cloud Nemotron")
-                model_text = msg.get("model") or ""
-                badge_info = f"{engine_text}" + (f" • `{model_text}`" if model_text and st.session_state.show_debug_traces else "")
-                if msg.get("tools_triggered"):
-                    badge_info += " • Tool Assisted"
+                badge_info = resolve_engine_and_model_badge(msg)
                 st.caption(f":grey[{badge_info}]")
 
             # Executed Tools Expander
@@ -910,7 +936,7 @@ if st.session_state.active_section == "Conversation":
                                 filename=filename,
                             )
                             if trans_data.get("success") and trans_data.get("text"):
-                                recognized_speech = trans_data["text"].strip()
+                                recognized_speech = str(trans_data.get("text") or "").strip()
                                 st.session_state.pending_prompt = recognized_speech
                                 st.session_state.dictation_active = False
                                 st.toast(f"Transcribed: \"{recognized_speech}\"", icon="🎙️")
@@ -924,8 +950,8 @@ if st.session_state.active_section == "Conversation":
 
     # Resolve Prompt to Send
     prompt_to_send = None
-    if typed_prompt and typed_prompt.strip():
-        prompt_to_send = typed_prompt.strip()
+    if typed_prompt and str(typed_prompt).strip():
+        prompt_to_send = str(typed_prompt).strip()
     elif st.session_state.pending_prompt:
         prompt_to_send = st.session_state.pending_prompt
         st.session_state.pending_prompt = None
@@ -950,7 +976,7 @@ if st.session_state.active_section == "Conversation":
 
                 if status_code == 200:
                     st.session_state.last_error_prompt = None
-                    model = response.get("model_used", "Local/Cloud")
+                    model = response.get("model_used") or "Local/Cloud"
                     complexity = response.get("complexity", "standard")
                     target_engine = response.get("target_engine", "local")
                     tools_used = response.get("tools_triggered", False)
@@ -965,9 +991,11 @@ if st.session_state.active_section == "Conversation":
 
                     status_box.update(label=f"Responded via {model}", state="complete")
 
-                    engine_badge = "Local Gemma 2B" if "gemma" in model.lower() else "Cloud Nemotron"
-                    if tools_used:
-                        engine_badge += " • Tool Assisted"
+                    engine_badge = resolve_engine_and_model_badge({
+                        "engine": target_engine,
+                        "model": model,
+                        "tools_triggered": tools_used,
+                    })
                     st.caption(f":grey[{engine_badge}]")
 
                     st.markdown(answer)
@@ -1371,7 +1399,9 @@ elif st.session_state.active_section == "Memory & Preferences":
                 with st.container(border=True):
                     col_ep1, col_ep2 = st.columns([5, 1])
                     with col_ep1:
-                        st.markdown(f"**{ep['title']}** &nbsp;•&nbsp; :grey[{ep['event_type'].title()}]")
+                        ep_title = ep.get("title") or "Untitled"
+                        ep_type = str(ep.get("event_type") or "task_outcome").title()
+                        st.markdown(f"**{ep_title}** &nbsp;•&nbsp; :grey[{ep_type}]")
                         st.markdown(ep["content"])
                         st.caption(f"Recorded: {ep['created_at'][:19]}")
                     with col_ep2:
@@ -1621,7 +1651,7 @@ elif st.session_state.active_section == "Settings":
                 log_records.append({
                     "Timestamp": al.get("timestamp", "")[:19],
                     "Action / Tool": al.get("tool_name") or al.get("action", "unknown"),
-                    "Risk Level": al.get("risk_level", "low").upper(),
+                    "Risk Level": str(al.get("risk_level") or "low").upper(),
                     "Decision": "ALLOWED" if al.get("allowed", True) else "BLOCKED",
                     "Details": al.get("reason") or str(al.get("parameters", ""))[:50],
                 })
