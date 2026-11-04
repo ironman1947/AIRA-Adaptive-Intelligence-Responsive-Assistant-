@@ -4,6 +4,24 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
+class Conversation(BaseModel):
+    id: str
+    user_id: Optional[str] = "default_user"
+    title: str = "New Conversation"
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class Message(BaseModel):
+    id: Optional[int] = None
+    conversation_id: str
+    role: str  # 'user' | 'assistant' | 'system'
+    content: str
+    engine: Optional[str] = None
+    model: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
 class ConversationMessage(BaseModel):
     id: Optional[int] = None
     session_id: str

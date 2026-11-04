@@ -61,11 +61,11 @@ _knowledge_engine = UnifiedKnowledgeEngine(
     project_mgr=_project_mgr,
 )
 
-def _save_turn(sess_id: str, prompt: str, result_text: str):
+def _save_turn(sess_id: str, prompt: str, result_text: str, engine: Optional[str] = None, model: Optional[str] = None):
     """Persists a user-assistant conversation turn in SQLite."""
     if sess_id and prompt and result_text:
-        _repo.add_conversation_message(sess_id, role="user", content=prompt)
-        _repo.add_conversation_message(sess_id, role="assistant", content=result_text)
+        _repo.add_message(conversation_id=sess_id, role="user", content=prompt)
+        _repo.add_message(conversation_id=sess_id, role="assistant", content=result_text, engine=engine, model=model)
 
 def is_canned_greeting(text: str) -> bool:
     """Checks if model output is an irrelevant canned greeting rather than answering the prompt."""

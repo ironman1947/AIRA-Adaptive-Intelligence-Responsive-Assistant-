@@ -181,6 +181,27 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    user_id TEXT DEFAULT 'default_user',
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    metadata TEXT DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    engine TEXT,
+    model TEXT,
+    created_at TEXT NOT NULL,
+    metadata TEXT DEFAULT '{}',
+    FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
 -- Indexes for fast retrieval
 CREATE INDEX IF NOT EXISTS idx_episodic_project ON episodic_memory(project_id);
 CREATE INDEX IF NOT EXISTS idx_semantic_subject ON semantic_memory(subject);
@@ -189,6 +210,8 @@ CREATE INDEX IF NOT EXISTS idx_procedural_app ON procedural_memory(applicability
 CREATE INDEX IF NOT EXISTS idx_rag_chunks_doc ON rag_chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_audit_req ON audit_logs(request_id);
 CREATE INDEX IF NOT EXISTS idx_conv_messages_session ON conversation_messages(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_conversations_user_updated ON conversations(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id ASC);
 """
 
 class DatabaseManager:

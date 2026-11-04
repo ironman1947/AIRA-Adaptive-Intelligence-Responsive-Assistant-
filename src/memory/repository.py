@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from src.memory.database import DatabaseManager, get_db_manager
 from src.memory.models import (
+    Conversation,
+    Message,
     ConversationMessage,
     UserProfileItem,
     UserPreference,
@@ -620,22 +622,229 @@ class MemoryRepository:
             return True
 
     # --------------------------------------------------------------------------
-    # Conversation Messages (Chat History Continuity)
+    # Conversations & Messages (Persistent Multi-Turn Chat Management)
     # --------------------------------------------------------------------------
-    def add_conversation_message(self, session_id: str, role: str, content: str) -> ConversationMessage:
+    def create_conversation(
+        self,
+        conversation_id: Optional[str] = None,
+        title: Optional[str] = None,
+        user_id: str = "default_user",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Conversation:
+        import uuid
+        now = datetime.now().isoformat()
+        cid = conversation_id or f"conv_{uuid.uuid4().hex[:12]}"
+        conv_title = title or "New Conversation"
+        meta_json = json.dumps(metadata or {})
+
         with self.db.connection() as conn:
-            now = datetime.now().isoformat()
-            cursor = conn.execute(
-                "INSERT INTO conversation_messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?);",
-                (session_id, role, content, now),
+            conn.execute(
+                """
+                INSERT INTO conversations (id, user_id, title, created_at, updated_at, metadata)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = CASE WHEN excluded.title != 'New Conversation' THEN excluded.title ELSE conversations.title END,
+                    updated_at = excluded.updated_at,
+                    metadata = excluded.metadata;
+                """,
+                (cid, user_id, conv_title, now, now, meta_json),
             )
-            return ConversationMessage(
-                id=cursor.lastrowid,
-                session_id=session_id,
+            return Conversation(
+                id=cid,
+                user_id=user_id,
+                title=conv_title,
+                created_at=now,
+                updated_at=now,
+                metadata=metadata or {},
+            )
+
+    def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT * FROM conversations WHERE id = ?;", (conversation_id,)).fetchone()
+            if not row:
+                return None
+            try:
+                meta = json.loads(row["metadata"] or "{}")
+            except Exception:
+                meta = {}
+            return Conversation(
+                id=row["id"],
+                user_id=row["user_id"],
+                title=row["title"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                metadata=meta,
+            )
+
+    def list_conversations(
+        self,
+        user_id: str = "default_user",
+        search: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Conversation]:
+        query = "SELECT * FROM conversations WHERE user_id = ?"
+        params: List[Any] = [user_id]
+        if search and search.strip():
+            query += " AND title LIKE ?"
+            params.append(f"%{search.strip()}%")
+        query += " ORDER BY updated_at DESC LIMIT ?;"
+        params.append(limit)
+
+        with self.db.connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+            conversations = []
+            for r in rows:
+                try:
+                    meta = json.loads(r["metadata"] or "{}")
+                except Exception:
+                    meta = {}
+                conversations.append(
+                    Conversation(
+                        id=r["id"],
+                        user_id=r["user_id"],
+                        title=r["title"],
+                        created_at=r["created_at"],
+                        updated_at=r["updated_at"],
+                        metadata=meta,
+                    )
+                )
+            return conversations
+
+    def update_conversation(
+        self,
+        conversation_id: str,
+        title: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Conversation]:
+        conv = self.get_conversation(conversation_id)
+        if not conv:
+            return None
+        now = datetime.now().isoformat()
+        new_title = title if title is not None else conv.title
+        new_meta = metadata if metadata is not None else conv.metadata
+        meta_json = json.dumps(new_meta)
+
+        with self.db.connection() as conn:
+            conn.execute(
+                "UPDATE conversations SET title = ?, updated_at = ?, metadata = ? WHERE id = ?;",
+                (new_title, now, meta_json, conversation_id),
+            )
+            return Conversation(
+                id=conversation_id,
+                user_id=conv.user_id,
+                title=new_title,
+                created_at=conv.created_at,
+                updated_at=now,
+                metadata=new_meta,
+            )
+
+    def delete_conversation(self, conversation_id: str) -> bool:
+        with self.db.connection() as conn:
+            conn.execute("DELETE FROM messages WHERE conversation_id = ?;", (conversation_id,))
+            conn.execute("DELETE FROM conversation_messages WHERE session_id = ?;", (conversation_id,))
+            cursor = conn.execute("DELETE FROM conversations WHERE id = ?;", (conversation_id,))
+            return cursor.rowcount > 0
+
+    def add_message(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        engine: Optional[str] = None,
+        model: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Message:
+        now = datetime.now().isoformat()
+        meta_json = json.dumps(metadata or {})
+
+        # Ensure conversation exists; if user's first prompt, generate a smart title
+        conv = self.get_conversation(conversation_id)
+        if not conv:
+            auto_title = generate_conversation_title(content) if role == "user" else "New Conversation"
+            self.create_conversation(conversation_id=conversation_id, title=auto_title)
+        elif conv.title == "New Conversation" and role == "user":
+            auto_title = generate_conversation_title(content)
+            self.update_conversation(conversation_id, title=auto_title)
+        else:
+            with self.db.connection() as conn:
+                conn.execute(
+                    "UPDATE conversations SET updated_at = ? WHERE id = ?;",
+                    (now, conversation_id),
+                )
+
+        with self.db.connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO messages (conversation_id, role, content, engine, model, created_at, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
+                """,
+                (conversation_id, role, content, engine, model, now, meta_json),
+            )
+            msg_id = cursor.lastrowid
+
+            # Keep conversation_messages synchronized for backward compatibility
+            conn.execute(
+                "INSERT INTO conversation_messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?);",
+                (conversation_id, role, content, now),
+            )
+
+            return Message(
+                id=msg_id,
+                conversation_id=conversation_id,
                 role=role,
                 content=content,
+                engine=engine,
+                model=model,
                 created_at=now,
+                metadata=metadata or {},
             )
+
+    def get_messages(self, conversation_id: str, limit: int = 100) -> List[Message]:
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM (
+                    SELECT * FROM messages
+                    WHERE conversation_id = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                ) ORDER BY id ASC;
+                """,
+                (conversation_id, limit),
+            ).fetchall()
+
+            messages = []
+            for r in rows:
+                try:
+                    meta = json.loads(r["metadata"] or "{}")
+                except Exception:
+                    meta = {}
+                messages.append(
+                    Message(
+                        id=r["id"],
+                        conversation_id=r["conversation_id"],
+                        role=r["role"],
+                        content=r["content"],
+                        engine=r["engine"],
+                        model=r["model"],
+                        created_at=r["created_at"],
+                        metadata=meta,
+                    )
+                )
+            return messages
+
+    # --------------------------------------------------------------------------
+    # Conversation Messages (Chat History Continuity - Backward Compatibility)
+    # --------------------------------------------------------------------------
+    def add_conversation_message(self, session_id: str, role: str, content: str) -> ConversationMessage:
+        msg = self.add_message(conversation_id=session_id, role=role, content=content)
+        return ConversationMessage(
+            id=msg.id,
+            session_id=session_id,
+            role=role,
+            content=content,
+            created_at=msg.created_at,
+        )
 
     def get_conversation_history(self, session_id: str, limit: int = 20) -> List[ConversationMessage]:
         with self.db.connection() as conn:
@@ -664,7 +873,33 @@ class MemoryRepository:
     def clear_conversation_history(self, session_id: Optional[str] = None) -> bool:
         with self.db.connection() as conn:
             if session_id:
+                conn.execute("DELETE FROM messages WHERE conversation_id = ?;", (session_id,))
                 cursor = conn.execute("DELETE FROM conversation_messages WHERE session_id = ?;", (session_id,))
             else:
+                conn.execute("DELETE FROM messages;")
                 cursor = conn.execute("DELETE FROM conversation_messages;")
             return cursor.rowcount > 0
+
+
+def generate_conversation_title(prompt: str) -> str:
+    """Generates a clean, concise conversation title from the first user prompt."""
+    import re
+    cleaned = prompt.strip().replace("\n", " ")
+    fillers = [
+        r"^(?:hello|hi|hey|good\s+morning|good\s+evening|greetings)(?:\s+aira)?[\s,!:.]*",
+        r"^(?:can\s+you|could\s+you|please|would\s+you\s+mind|i\s+want\s+you\s+to|i\s+need\s+you\s+to)\s+",
+        r"^(?:tell\s+me\s+about|what\s+is\s+the|what\s+is|what\s+are|how\s+to|explain\s+to\s+me|explain)\s+",
+    ]
+    for f in fillers:
+        cleaned = re.sub(f, "", cleaned, flags=re.IGNORECASE).strip()
+
+    cleaned = re.sub(r"[\s,!?.:;]+$", "", cleaned)
+    if not cleaned:
+        cleaned = "New Conversation"
+    else:
+        cleaned = cleaned[0].upper() + cleaned[1:]
+
+    if len(cleaned) > 42:
+        cleaned = cleaned[:39].rstrip() + "..."
+    return cleaned
+

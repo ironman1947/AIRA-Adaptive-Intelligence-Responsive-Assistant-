@@ -60,6 +60,23 @@ class AgentRequest(BaseModel):
     privacy_mode: Optional[str] = "standard"  # standard | local_only
     pre_approved_action: bool = False
 
+class CreateConversationRequest(BaseModel):
+    id: Optional[str] = None
+    title: Optional[str] = None
+    user_id: Optional[str] = "default_user"
+    metadata: Optional[Dict[str, Any]] = None
+
+class UpdateConversationRequest(BaseModel):
+    title: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class AddMessageRequest(BaseModel):
+    role: str
+    content: str
+    engine: Optional[str] = None
+    model: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
 class FeedbackRequest(BaseModel):
     request_id: str
     helpful: bool
@@ -126,19 +143,100 @@ async def get_runtime_state():
     return state.to_dict()
 
 # ------------------------------------------------------------------------------
-# Main Chat Workflow
+# Main Chat & Persistent Conversation Management
 # ------------------------------------------------------------------------------
+@app.post("/api/conversations")
+async def create_conversation_endpoint(req: Optional[CreateConversationRequest] = None):
+    """Creates a new persistent conversation."""
+    req_data = req or CreateConversationRequest()
+    conv = repo.create_conversation(
+        conversation_id=req_data.id,
+        title=req_data.title,
+        user_id=req_data.user_id or "default_user",
+        metadata=req_data.metadata or {},
+    )
+    return conv.model_dump()
+
+@app.get("/api/conversations")
+async def list_conversations_endpoint(
+    user_id: str = "default_user",
+    search: Optional[str] = None,
+    limit: int = 100,
+):
+    """Retrieves all conversations sorted by most recently updated."""
+    convs = repo.list_conversations(user_id=user_id, search=search, limit=limit)
+    return [c.model_dump() for c in convs]
+
+@app.get("/api/conversations/{conversation_id}")
+async def get_conversation_endpoint(conversation_id: str):
+    """Retrieves conversation details along with its chronological messages."""
+    conv = repo.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    messages = repo.get_messages(conversation_id, limit=200)
+    data = conv.model_dump()
+    data["messages"] = [m.model_dump() for m in messages]
+    return data
+
+@app.patch("/api/conversations/{conversation_id}")
+async def update_conversation_endpoint(conversation_id: str, req: UpdateConversationRequest):
+    """Renames a conversation or updates its metadata."""
+    conv = repo.update_conversation(
+        conversation_id=conversation_id,
+        title=req.title,
+        metadata=req.metadata,
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv.model_dump()
+
+@app.delete("/api/conversations/{conversation_id}")
+async def delete_conversation_endpoint(conversation_id: str):
+    """Deletes a conversation and cascades to its messages."""
+    success = repo.delete_conversation(conversation_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "deleted", "conversation_id": conversation_id}
+
+@app.post("/api/conversations/{conversation_id}/messages")
+async def add_message_endpoint(conversation_id: str, req: AddMessageRequest):
+    """Appends a single message to a conversation."""
+    msg = repo.add_message(
+        conversation_id=conversation_id,
+        role=req.role,
+        content=req.content,
+        engine=req.engine,
+        model=req.model,
+        metadata=req.metadata or {},
+    )
+    return msg.model_dump()
+
 @app.post("/api/chat")
 async def chat_endpoint(request: AgentRequest):
-    """Primary chat entry point for AIRA."""
+    """Primary chat entry point for AIRA with reliable conversation persistence."""
     try:
+        sess_id = request.session_id
+        if sess_id:
+            conv = repo.get_conversation(sess_id)
+            if not conv:
+                from src.memory.repository import generate_conversation_title
+                repo.create_conversation(
+                    conversation_id=sess_id,
+                    title=generate_conversation_title(request.prompt),
+                    metadata={"project_id": request.project_id} if request.project_id else {},
+                )
+
         response = await run_agent_workflow(
             prompt=request.prompt,
-            session_id=request.session_id,
+            session_id=sess_id,
             project_id=request.project_id,
             privacy_mode=request.privacy_mode,
             pre_approved_action=request.pre_approved_action,
         )
+
+        actual_sess_id = response.get("runtime_state", {}).get("active_session_id") or sess_id
+        response["conversation_id"] = actual_sess_id
+        response["session_id"] = actual_sess_id
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

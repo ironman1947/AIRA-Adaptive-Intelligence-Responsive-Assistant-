@@ -7,7 +7,7 @@ import os
 import json
 import time
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 import requests
 import streamlit as st
@@ -33,9 +33,10 @@ CUSTOM_CSS = """
 html, body, [class*="css"] {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-/* Hide Default Streamlit Header Decoration for Clean Look */
+/* Hide Default Streamlit Header Decoration for Clean SaaS Aesthetic */
 header[data-testid="stHeader"] {
     background: transparent;
 }
@@ -46,19 +47,19 @@ header[data-testid="stHeader"] {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 2.2rem 1rem 1.4rem 1rem;
+    padding: 2.0rem 1rem 1.2rem 1rem;
     text-align: center;
 }
 
 .aira-orb {
-    width: 88px;
-    height: 88px;
+    width: 80px;
+    height: 80px;
     border-radius: 50%;
-    background: radial-gradient(circle at 35% 35%, #00F0FF 0%, #3B82F6 40%, #8B5CF6 75%, #070A12 100%);
-    box-shadow: 0 0 35px rgba(0, 240, 255, 0.45), 0 0 70px rgba(139, 92, 246, 0.25);
+    background: radial-gradient(circle at 35% 35%, #00F0FF 0%, #0070F3 45%, #8B5CF6 80%, #070A12 100%);
+    box-shadow: 0 0 30px rgba(0, 240, 255, 0.4), 0 0 60px rgba(139, 92, 246, 0.2);
     animation: aira-pulse 4.5s ease-in-out infinite alternate;
     position: relative;
-    margin-bottom: 1.2rem;
+    margin-bottom: 1.0rem;
 }
 
 .aira-orb::after {
@@ -67,21 +68,21 @@ header[data-testid="stHeader"] {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 108px;
-    height: 108px;
+    width: 98px;
+    height: 98px;
     border-radius: 50%;
     border: 1px dashed rgba(0, 240, 255, 0.35);
-    animation: aira-ring-spin 18s linear infinite;
+    animation: aira-ring-spin 20s linear infinite;
 }
 
 @keyframes aira-pulse {
     0% {
-        transform: scale(0.95);
-        box-shadow: 0 0 25px rgba(0, 240, 255, 0.35), 0 0 50px rgba(139, 92, 246, 0.2);
+        transform: scale(0.96);
+        box-shadow: 0 0 20px rgba(0, 240, 255, 0.3), 0 0 40px rgba(139, 92, 246, 0.15);
     }
     100% {
-        transform: scale(1.04);
-        box-shadow: 0 0 45px rgba(0, 240, 255, 0.65), 0 0 90px rgba(139, 92, 246, 0.4);
+        transform: scale(1.03);
+        box-shadow: 0 0 35px rgba(0, 240, 255, 0.55), 0 0 70px rgba(139, 92, 246, 0.3);
     }
 }
 
@@ -96,182 +97,126 @@ header[data-testid="stHeader"] {
     }
 }
 
-/* Sidebar Brand Pill */
+/* Sidebar Brand Header */
 .aira-sidebar-brand {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 0.6rem 0.2rem 1.2rem 0.2rem;
-    border-bottom: 1px solid rgba(30, 41, 59, 0.7);
-    margin-bottom: 1.2rem;
+    padding: 0.6rem 0.2rem 1.0rem 0.2rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 0.8rem;
 }
 
 .aira-mini-orb {
     width: 32px;
     height: 32px;
-    min-width: 32px;
     border-radius: 50%;
-    background: radial-gradient(circle at 35% 35%, #00F0FF 0%, #3B82F6 45%, #8B5CF6 85%);
-    box-shadow: 0 0 15px rgba(0, 240, 255, 0.5);
+    background: radial-gradient(circle at 35% 35%, #00F0FF 0%, #0070F3 50%, #8B5CF6 100%);
+    box-shadow: 0 0 14px rgba(0, 240, 255, 0.5);
+    flex-shrink: 0;
 }
 
 .aira-sidebar-title {
-    font-size: 1.25rem;
-    font-weight: 700;
+    font-size: 1.15rem;
+    font-weight: 800;
     letter-spacing: -0.02em;
     color: #F8FAFC;
-    line-height: 1.2;
+    line-height: 1.1;
 }
 
 .aira-sidebar-sub {
     font-size: 0.72rem;
     color: #94A3B8;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.08em;
+    font-weight: 500;
 }
 
-/* Custom Cards */
-.aira-glass-card {
-    background: rgba(15, 22, 38, 0.65);
-    border: 1px solid rgba(0, 240, 255, 0.12);
-    border-radius: 12px;
-    padding: 1.2rem;
-    margin-bottom: 0.9rem;
-    backdrop-filter: blur(10px);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.aira-glass-card:hover {
-    border-color: rgba(0, 240, 255, 0.3);
-    box-shadow: 0 4px 20px rgba(0, 240, 255, 0.06);
-}
-
-.aira-citation-card {
-    background: rgba(13, 19, 33, 0.75);
-    border-left: 3px solid #00F0FF;
-    border-radius: 4px 8px 8px 4px;
-    padding: 0.6rem 0.9rem;
-    margin-top: 0.6rem;
-    font-size: 0.85rem;
-    color: #CBD5E1;
-}
-
-/* Status Badges */
-.aira-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 8px;
-    border-radius: 9999px;
-    font-size: 0.72rem;
-    font-weight: 600;
-}
-.aira-badge-cyan {
-    background: rgba(0, 240, 255, 0.1);
-    color: #00F0FF;
-    border: 1px solid rgba(0, 240, 255, 0.25);
-}
-.aira-badge-violet {
-    background: rgba(139, 92, 246, 0.12);
-    color: #C084FC;
-    border: 1px solid rgba(139, 92, 246, 0.28);
-}
-.aira-badge-green {
-    background: rgba(34, 197, 94, 0.12);
-    color: #4ADE80;
-    border: 1px solid rgba(34, 197, 94, 0.25);
-}
-.aira-badge-amber {
-    background: rgba(245, 158, 11, 0.12);
-    color: #FBBF24;
-    border: 1px solid rgba(245, 158, 11, 0.25);
-}
-
-/* Subtle Workspace Header */
+/* Workspace Header Card */
 .aira-workspace-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0 1.2rem 0;
-    border-bottom: 1px solid rgba(30, 41, 59, 0.5);
-    margin-bottom: 1.2rem;
+    padding: 0.8rem 0;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .aira-workspace-title {
-    font-size: 1.35rem;
+    font-size: 1.30rem;
     font-weight: 700;
     color: #F1F5F9;
     letter-spacing: -0.01em;
 }
 
 .aira-workspace-subtitle {
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     color: #94A3B8;
+    margin-top: 2px;
+}
+
+/* Badges */
+.aira-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: rgba(255, 255, 255, 0.06);
+    color: #CBD5E1;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.aira-badge-cyan {
+    background: rgba(0, 240, 255, 0.12);
+    color: #00F0FF;
+    border: 1px solid rgba(0, 240, 255, 0.3);
+}
+
+.aira-badge-green {
+    background: rgba(16, 185, 129, 0.12);
+    color: #34D399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.aira-badge-amber {
+    background: rgba(245, 158, 11, 0.12);
+    color: #FBBF24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.aira-badge-violet {
+    background: rgba(139, 92, 246, 0.12);
+    color: #A78BFA;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+/* Conversation Item in Sidebar */
+.conv-group-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748B;
+    margin: 0.8rem 0 0.3rem 0;
+}
+
+/* Citation Card */
+.aira-citation-card {
+    background: #0F1626;
+    border-left: 3px solid #00F0FF;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin: 6px 0;
+    font-size: 0.85rem;
 }
 </style>
 """
 
 st.html(CUSTOM_CSS)
-
-# ------------------------------------------------------------------------------
-# Session State Initialization
-# ------------------------------------------------------------------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "session_id" not in st.session_state:
-    st.session_state.session_id = f"sess_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-if "active_section" not in st.session_state:
-    st.session_state.active_section = "Conversation"
-
-if "active_project" not in st.session_state:
-    st.session_state.active_project = None
-
-if "privacy_mode" not in st.session_state:
-    st.session_state.privacy_mode = "standard"  # "standard" | "local_only"
-
-if "show_debug_traces" not in st.session_state:
-    st.session_state.show_debug_traces = False
-
-if "pending_prompt" not in st.session_state:
-    st.session_state.pending_prompt = None
-
-if "rag_search_results" not in st.session_state:
-    st.session_state.rag_search_results = None
-
-if "voice_output_enabled" not in st.session_state:
-    st.session_state.voice_output_enabled = True
-
-if "selected_voice" not in st.session_state:
-    st.session_state.selected_voice = "EXAVITQu4vr4xnSDxMaL"
-
-if "selected_language" not in st.session_state:
-    st.session_state.selected_language = "auto"
-
-if "chat_draft" not in st.session_state:
-    st.session_state.chat_draft = ""
-
-if "dictation_active" not in st.session_state:
-    st.session_state.dictation_active = False
-
-if "wake_word_enabled" not in st.session_state:
-    st.session_state.wake_word_enabled = False
-
-if "wake_word_state" not in st.session_state:
-    st.session_state.wake_word_state = "wake_word_disabled"
-
-if "pending_voice_transcript" not in st.session_state:
-    st.session_state.pending_voice_transcript = None
-
-if "last_processed_audio_bytes_hash" not in st.session_state:
-    st.session_state.last_processed_audio_bytes_hash = None
-
-if "last_transcription_meta" not in st.session_state:
-    st.session_state.last_transcription_meta = None
-
-if "audio_cache_by_req_id" not in st.session_state:
-    st.session_state.audio_cache_by_req_id = {}
 
 # ------------------------------------------------------------------------------
 # API Helpers
@@ -292,12 +237,12 @@ def api_post(endpoint: str, payload: dict, timeout: float = 60.0):
     except Exception as e:
         return 500, {"error": str(e)}
 
-def api_voice_stop():
-    """Cancels active speech output and stops macOS say processes immediately."""
+def api_patch(endpoint: str, payload: dict, timeout: float = 10.0):
     try:
-        requests.post(f"{BACKEND_URL}/api/voice/stop", timeout=2.0)
-    except Exception:
-        pass
+        resp = requests.patch(f"{BACKEND_URL}{endpoint}", json=payload, timeout=timeout)
+        return resp.status_code, resp.json()
+    except Exception as e:
+        return 500, {"error": str(e)}
 
 def api_delete(endpoint: str, timeout: float = 10.0):
     try:
@@ -305,6 +250,13 @@ def api_delete(endpoint: str, timeout: float = 10.0):
         return resp.status_code, resp.json()
     except Exception as e:
         return 500, {"error": str(e)}
+
+def api_voice_stop():
+    """Cancels active speech output and stops macOS say processes immediately."""
+    try:
+        requests.post(f"{BACKEND_URL}/api/voice/stop", timeout=2.0)
+    except Exception:
+        pass
 
 def api_transcribe(
     audio_bytes: bytes,
@@ -346,9 +298,123 @@ def api_synthesize(text: str, voice_id: Optional[str] = None, language: str = "e
         print(f"TTS synthesis API error: {e}")
     return None
 
+def group_conversations_by_date(conversations: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """Groups conversation dictionaries into Today, Yesterday, Previous 7 Days, and Older."""
+    now = datetime.now()
+    today_date = now.date()
+    yesterday_date = today_date - timedelta(days=1)
+    seven_days_ago = today_date - timedelta(days=7)
+
+    groups = {
+        "Today": [],
+        "Yesterday": [],
+        "Previous 7 Days": [],
+        "Older": [],
+    }
+
+    for conv in conversations:
+        up_str = conv.get("updated_at") or conv.get("created_at") or ""
+        try:
+            clean_ts = up_str.replace("Z", "+00:00")
+            conv_date = datetime.fromisoformat(clean_ts).date()
+        except Exception:
+            conv_date = today_date
+
+        if conv_date == today_date:
+            groups["Today"].append(conv)
+        elif conv_date == yesterday_date:
+            groups["Yesterday"].append(conv)
+        elif conv_date >= seven_days_ago:
+            groups["Previous 7 Days"].append(conv)
+        else:
+            groups["Older"].append(conv)
+
+    return groups
+
 # ------------------------------------------------------------------------------
+# Persistent Conversation & Session State Initialization
+# ------------------------------------------------------------------------------
+url_cid = st.query_params.get("cid")
+
+if "conversation_id" not in st.session_state:
+    if url_cid:
+        st.session_state.conversation_id = url_cid
+    else:
+        recent = api_get("/api/conversations?limit=1", [])
+        if recent and len(recent) > 0:
+            st.session_state.conversation_id = recent[0]["id"]
+            st.query_params["cid"] = st.session_state.conversation_id
+        else:
+            code, created = api_post("/api/conversations", {"title": "New Conversation"})
+            new_id = created.get("id", f"conv_{int(time.time())}")
+            st.session_state.conversation_id = new_id
+            st.query_params["cid"] = new_id
+elif url_cid and url_cid != st.session_state.conversation_id:
+    st.session_state.conversation_id = url_cid
+
+# Ensure URL always tracks active conversation
+st.query_params["cid"] = st.session_state.conversation_id
+
+# Load Messages from Backend Database on Conversation Change
+if st.session_state.get("last_loaded_conv_id") != st.session_state.conversation_id:
+    conv_data = api_get(f"/api/conversations/{st.session_state.conversation_id}")
+    if conv_data and "messages" in conv_data:
+        st.session_state.messages = conv_data["messages"]
+        st.session_state.current_conv_title = conv_data.get("title", "New Conversation")
+    else:
+        st.session_state.messages = []
+        st.session_state.current_conv_title = "New Conversation"
+    st.session_state.last_loaded_conv_id = st.session_state.conversation_id
+
+if "active_section" not in st.session_state:
+    st.session_state.active_section = "Conversation"
+
+if "active_project" not in st.session_state:
+    st.session_state.active_project = None
+
+if "privacy_mode" not in st.session_state:
+    st.session_state.privacy_mode = "standard"  # "standard" | "local_only"
+
+if "show_debug_traces" not in st.session_state:
+    st.session_state.show_debug_traces = False
+
+if "pending_prompt" not in st.session_state:
+    st.session_state.pending_prompt = None
+
+if "rag_search_results" not in st.session_state:
+    st.session_state.rag_search_results = None
+
+if "voice_output_enabled" not in st.session_state:
+    st.session_state.voice_output_enabled = True
+
+if "selected_voice" not in st.session_state:
+    st.session_state.selected_voice = "EXAVITQu4vr4xnSDxMaL"
+
+if "selected_language" not in st.session_state:
+    st.session_state.selected_language = "auto"
+
+if "chat_draft" not in st.session_state:
+    st.session_state.chat_draft = ""
+
+if "dictation_active" not in st.session_state:
+    st.session_state.dictation_active = False
+
+if "wake_word_enabled" not in st.session_state:
+    st.session_state.wake_word_enabled = False
+
+if "wake_word_state" not in st.session_state:
+    st.session_state.wake_word_state = "wake_word_disabled"
+
+if "audio_cache_by_req_id" not in st.session_state:
+    st.session_state.audio_cache_by_req_id = {}
+
+if "last_processed_audio_bytes_hash" not in st.session_state:
+    st.session_state.last_processed_audio_bytes_hash = None
+
+if "last_error_prompt" not in st.session_state:
+    st.session_state.last_error_prompt = None
+
 # Cached / Live Data Fetching
-# ------------------------------------------------------------------------------
 health_data = api_get("/health", {})
 is_healthy = health_data.get("status") == "healthy"
 local_engine_online = health_data.get("local_engine_online", False)
@@ -358,52 +424,134 @@ user_info = api_get("/api/user-profile/name", {})
 user_display_name = user_info.get("user_display_name")
 
 # ------------------------------------------------------------------------------
-# SIDEBAR: Branding, Workspaces, and Controls
+# SIDEBAR: Branding, New Chat, Search, History, Workspaces, and Status
 # ------------------------------------------------------------------------------
 with st.sidebar:
-    # AIRA Distinctive Brand Header
+    # 1. AIRA Logo and Branding
     st.html("""
     <div class="aira-sidebar-brand">
         <div class="aira-mini-orb"></div>
         <div>
             <div class="aira-sidebar-title">AIRA</div>
-            <div class="aira-sidebar-sub">Adaptive Intelligence</div>
+            <div class="aira-sidebar-sub">Adaptive Intelligence Workspace</div>
         </div>
     </div>
     """)
 
-    # Workspace Section Navigation
+    # 2. New Chat Button
+    if st.button("➕  New Chat", width="stretch", type="primary", key="btn_sidebar_new_chat"):
+        st_code, new_c = api_post("/api/conversations", {"title": "New Conversation"})
+        if st_code == 200:
+            st.session_state.conversation_id = new_c["id"]
+            st.query_params["cid"] = new_c["id"]
+            st.session_state.messages = []
+            st.session_state.current_conv_title = "New Conversation"
+            st.session_state.last_loaded_conv_id = new_c["id"]
+            st.session_state.active_section = "Conversation"
+            st.session_state.pending_prompt = None
+            st.rerun()
+
+    # 3. Search Conversations
+    conv_search_query = st.text_input(
+        "Search conversations...",
+        placeholder="🔍 Search history...",
+        key="sidebar_search_conversations",
+        label_visibility="collapsed",
+    )
+
+    # 4. Conversation History Grouped
+    all_convs = api_get(f"/api/conversations?search={conv_search_query.strip()}", [])
+    date_groups = group_conversations_by_date(all_convs)
+
+    with st.container(height=260):
+        total_found = sum(len(items) for items in date_groups.values())
+        if total_found == 0:
+            st.caption("No conversations yet.")
+        else:
+            for g_name in ["Today", "Yesterday", "Previous 7 Days", "Older"]:
+                c_items = date_groups[g_name]
+                if c_items:
+                    st.html(f"<div class='conv-group-label'>{g_name}</div>")
+                    for c in c_items:
+                        cid = c["id"]
+                        ctitle = c.get("title") or "New Conversation"
+                        is_active = (cid == st.session_state.conversation_id)
+
+                        col_btn, col_opt = st.columns([5, 1], vertical_alignment="center")
+                        with col_btn:
+                            btn_style = "primary" if is_active else "secondary"
+                            display_title = (ctitle[:24] + "...") if len(ctitle) > 27 else ctitle
+                            if st.button(
+                                f"{'💬' if not is_active else '👉'} {display_title}",
+                                key=f"conv_select_{cid}",
+                                width="stretch",
+                                type=btn_style,
+                                help=ctitle
+                            ):
+                                st.session_state.conversation_id = cid
+                                st.query_params["cid"] = cid
+                                st.session_state.active_section = "Conversation"
+                                st.session_state.pending_prompt = None
+                                st.rerun()
+
+                        with col_opt:
+                            with st.popover("⋮", help="Conversation actions"):
+                                st.caption(f"**Manage Chat**")
+                                new_t = st.text_input("Rename Title", value=ctitle, key=f"rename_input_{cid}")
+                                if st.button("Save Name", key=f"btn_save_name_{cid}", width="stretch"):
+                                    if new_t.strip():
+                                        api_patch(f"/api/conversations/{cid}", {"title": new_t.strip()})
+                                        if cid == st.session_state.conversation_id:
+                                            st.session_state.current_conv_title = new_t.strip()
+                                        st.rerun()
+
+                                st.divider()
+                                if st.button("🗑️ Delete", key=f"btn_delete_conv_{cid}", width="stretch"):
+                                    api_delete(f"/api/conversations/{cid}")
+                                    if cid == st.session_state.conversation_id:
+                                        # Switch to next available or create new
+                                        st_code, new_c = api_post("/api/conversations", {"title": "New Conversation"})
+                                        st.session_state.conversation_id = new_c["id"]
+                                        st.query_params["cid"] = new_c["id"]
+                                        st.session_state.messages = []
+                                        st.session_state.current_conv_title = "New Conversation"
+                                        st.session_state.last_loaded_conv_id = new_c["id"]
+                                    st.rerun()
+
+    st.divider()
+
+    # 5. Workspace Navigation (Projects, Knowledge Base, Memory, Settings)
+    st.markdown("**Workspace Views**")
     SECTIONS = [
         ("Conversation", ":material/chat:"),
-        ("Memory & Preferences", ":material/psychology:"),
         ("Projects", ":material/folder:"),
         ("Knowledge Base", ":material/menu_book:"),
-        ("Safeguards", ":material/security:"),
-        ("System & Diagnostics", ":material/monitoring:"),
+        ("Memory & Preferences", ":material/psychology:"),
+        ("Settings", ":material/settings:"),
     ]
 
     section_labels = [f"{icon}  {name}" for name, icon in SECTIONS]
     section_name_map = {f"{icon}  {name}": name for name, icon in SECTIONS}
-    
-    current_idx = 0
+
+    curr_sec_idx = 0
     for idx, (s_name, _) in enumerate(SECTIONS):
         if s_name == st.session_state.active_section:
-            current_idx = idx
+            curr_sec_idx = idx
             break
 
-    selected_label = st.radio(
-        "Workspace Navigation",
+    selected_sec = st.radio(
+        "Navigation",
         options=section_labels,
-        index=current_idx,
+        index=curr_sec_idx,
         label_visibility="collapsed",
-        key="sidebar_navigation_radio",
+        key="main_navigation_radio",
     )
-    st.session_state.active_section = section_name_map[selected_label]
+    st.session_state.active_section = section_name_map[selected_sec]
 
     st.divider()
 
     # Workspace Context (Project Selector)
-    st.markdown("**Workspace Context**")
+    st.markdown("**Active Project**")
     projects_list = api_get("/api/projects", [])
     proj_options = {"none": "General (No Project)"}
     for p in projects_list:
@@ -420,127 +568,34 @@ with st.sidebar:
         index=current_proj_index,
         label_visibility="collapsed",
         key="sidebar_project_selector",
-        help="Ground conversations and document ingestion in a dedicated project workspace."
+        help="Ground conversations, memory, and RAG in a dedicated project workspace."
     )
     st.session_state.active_project = None if selected_proj == "none" else selected_proj
 
-    # Privacy & Control Toggles
-    with st.container(border=True):
-        st.markdown("**Security & Telemetry**")
-        local_toggle = st.toggle(
-            "Local-only privacy",
-            value=(st.session_state.privacy_mode == "local_only"),
-            help="Strictly blocks cloud routing. All reasoning executes locally on Gemma 2B.",
-        )
-        st.session_state.privacy_mode = "local_only" if local_toggle else "standard"
-        if local_toggle:
-            st.caption(":green[🔒 Zero cloud telemetry active.]")
-
-        st.session_state.show_debug_traces = st.toggle(
-            "Execution traces",
-            value=st.session_state.show_debug_traces,
-            help="Reveal engine routing, tool parameters, and timing in conversation.",
-        )
-
-    # Voice & Desktop Control Section
-    with st.container(border=True):
-        st.markdown("**Voice & Desktop Control**")
-        st.session_state.voice_output_enabled = st.toggle(
-            "Spoken responses (TTS)",
-            value=st.session_state.voice_output_enabled,
-            help="AIRA speaks responses aloud using macOS native speech synthesis.",
-        )
-
-        wake_sb = st.toggle(
-            "Enable wake word ('Hey AIRA')",
-            value=st.session_state.wake_word_enabled,
-            help="Listen locally for 'Hey AIRA' wake phrase.",
-            key="sidebar_wake_toggle",
-        )
-        if wake_sb != st.session_state.wake_word_enabled:
-            st.session_state.wake_word_enabled = wake_sb
-            st.session_state.wake_word_state = "listening_locally" if wake_sb else "wake_word_disabled"
-            st.rerun()
-
-        st.caption("Wake Phrase: `:material/mic: 'Hey AIRA'` • Mic: `Default CoreAudio`")
-
-        st.session_state.selected_language = st.selectbox(
-            "Speech Language",
-            options=["auto", "en", "hi", "mr"],
-            format_func=lambda x: {
-                "auto": "🌐 Auto-Detect Language",
-                "en": "🇬🇧 English",
-                "hi": "🇮🇳 Hindi (हिंदी)",
-                "mr": "🇮🇳 Marathi (मराठी)",
-            }.get(x, x),
-            index=["auto", "en", "hi", "mr"].index(st.session_state.selected_language),
-            help="Configures speech recognition model for English, Hindi, Marathi, or mixed code-switching.",
-            key="sidebar_speech_lang_select"
-        )
-
-        voice_cfg = api_get("/api/voice/config", {"available_voices": [{"id": "Samantha", "name": "Samantha (US Female)"}]})
-        avail_voices = voice_cfg.get("available_voices", [])
-        voice_ids = [v["id"] for v in avail_voices] if avail_voices else ["Samantha"]
-        curr_v_idx = voice_ids.index(st.session_state.selected_voice) if st.session_state.selected_voice in voice_ids else 0
-        st.session_state.selected_voice = st.selectbox(
-            "AIRA Voice",
-            options=voice_ids,
-            format_func=lambda vid: next((v["name"] for v in avail_voices if v["id"] == vid), vid),
-            index=curr_v_idx,
-            help="Select native macOS voice persona (e.g. Samantha for English, Lekha for Hindi/Marathi).",
-            key="sidebar_voice_select"
-        )
-
-        # Desktop Control Scopes
-        desktop_stat = api_get("/api/desktop/status", {})
-        pending_plans = desktop_stat.get("pending_plans", [])
-        if pending_plans:
-            st.warning(f"⚠️ **{len(pending_plans)} Pending Approval(s)**")
-        else:
-            st.caption("Computer Control: `Whitelisted Apps Only` • `Approval Required`")
-
-    # Session Management
-    col_sb1, col_sb2 = st.columns(2)
-    with col_sb1:
-        if st.button("New session", width="stretch", icon=":material/add:"):
-            st.session_state.session_id = f"sess_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            st.session_state.messages = []
-            st.session_state.pending_prompt = None
-            st.rerun()
-    with col_sb2:
-        if st.button("Clear chat", width="stretch", icon=":material/delete_sweep:"):
-            api_delete(f"/api/history/{st.session_state.session_id}")
-            st.session_state.messages = []
-            st.session_state.pending_prompt = None
-            st.rerun()
-
-    st.divider()
-
-    # Dynamic Runtime Status
-    st.markdown("**Runtime Status**")
+    # System Status Card
     if is_healthy:
         status_dot = '<span class="aira-badge aira-badge-green">● Online & Ready</span>'
     else:
-        status_dot = '<span class="aira-badge aira-badge-amber">● Connecting / Offline</span>'
+        status_dot = '<span class="aira-badge aira-badge-amber">● Connecting</span>'
 
-    local_tag = "Ready" if local_engine_online else "Standby"
+    local_tag = "Active" if local_engine_online else "Standby"
     cloud_tag = "Connected" if cloud_engine_online else "Offline"
 
     st.html(f"""
-    <div style="font-size: 0.8rem; line-height: 1.6; color: #94A3B8;">
-        <div>System: {status_dot}</div>
-        <div style="margin-top: 4px;">Local Gemma: <strong style="color: #F1F5F9;">{local_tag}</strong></div>
+    <div style="font-size: 0.78rem; line-height: 1.6; color: #94A3B8; margin-top: 10px; padding: 8px 10px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid rgba(255,255,255,0.06);">
+        <div>Status: {status_dot}</div>
+        <div style="margin-top: 2px;">Local Gemma: <strong style="color: #F1F5F9;">{local_tag}</strong></div>
         <div>Cloud Nemotron: <strong style="color: #F1F5F9;">{cloud_tag}</strong></div>
-        <div style="margin-top: 4px; font-size: 0.72rem; color: #64748B;">User: <strong style="color: #CBD5E1;">{user_display_name or 'Unregistered'}</strong></div>
     </div>
     """)
 
 
 # ==============================================================================
-# SECTION 1: CONVERSATION WORKSPACE (Primary Experience)
+# SECTION 1: CONVERSATION WORKSPACE (Main Chat Experience)
 # ==============================================================================
 if st.session_state.active_section == "Conversation":
-    # Workspace Top Context Bar
+    # 1. Clean Workspace Header (Current Title, Active Engine, Project, Actions)
+    conv_title = st.session_state.get("current_conv_title", "New Conversation")
     proj_tag = f"📁 {st.session_state.active_project}" if st.session_state.active_project else "General Workspace"
     privacy_tag = "🔒 Local Privacy" if st.session_state.privacy_mode == "local_only" else "🌐 Hybrid Dual-Engine"
 
@@ -549,61 +604,40 @@ if st.session_state.active_section == "Conversation":
         st.html(f"""
         <div class="aira-workspace-header" style="border-bottom: none; padding-bottom: 0;">
             <div>
-                <div class="aira-workspace-title">Personal AI Workspace</div>
+                <div class="aira-workspace-title">{conv_title}</div>
                 <div class="aira-workspace-subtitle">{proj_tag} &nbsp;•&nbsp; {privacy_tag}</div>
             </div>
         </div>
         """)
     with col_h2:
-        st.caption(f"Session: `{st.session_state.session_id[-11:]}`")
-
-    # --------------------------------------------------------------------------
-    # Voice & Desktop Control Bar (Compact Hands-Free & Safety Controls)
-    # --------------------------------------------------------------------------
-    with st.container():
-        col_ctl1, col_ctl2, col_ctl3 = st.columns([2, 3, 1], vertical_alignment="center")
-        with col_ctl1:
-            wake_toggle = st.toggle(
-                "🎙️ Hands-Free 'Hey AIRA'",
-                value=st.session_state.wake_word_enabled,
-                help="Enable continuous local on-device wake-word detection for 'Hey AIRA'. Zero cloud ambient streaming.",
-                key="toggle_wake_word_active"
-            )
-            if wake_toggle != st.session_state.wake_word_enabled:
-                st.session_state.wake_word_enabled = wake_toggle
-                st.session_state.wake_word_state = "listening_locally" if wake_toggle else "wake_word_disabled"
+        col_act1, col_act2 = st.columns([1, 1])
+        with col_act1:
+            with st.popover("✏️ Rename", help="Rename conversation title"):
+                rename_val = st.text_input("Title", value=conv_title, key="header_rename_input")
+                if st.button("Save", key="btn_header_save_title", width="stretch"):
+                    if rename_val.strip():
+                        api_patch(f"/api/conversations/{st.session_state.conversation_id}", {"title": rename_val.strip()})
+                        st.session_state.current_conv_title = rename_val.strip()
+                        st.rerun()
+        with col_act2:
+            if st.button("🗑️ Clear", help="Clear messages in this conversation", width="stretch"):
+                api_delete(f"/api/history/{st.session_state.conversation_id}")
+                st.session_state.messages = []
+                st.toast("Conversation cleared.", icon="🗑️")
                 st.rerun()
-
-        with col_ctl2:
-            # Lifecycle state pill
-            if st.session_state.wake_word_enabled:
-                st.html("""
-                <span class="aira-badge aira-badge-cyan">● Listening Locally for 'Hey AIRA'</span>
-                <span style="font-size: 0.75rem; color: #94A3B8; margin-left: 8px;">100% On-Device • Local Faster-Whisper</span>
-                """)
-            else:
-                st.html("""
-                <span class="aira-badge" style="background: rgba(100, 116, 139, 0.2); color: #94A3B8; border: 1px solid rgba(100, 116, 139, 0.4);">○ Wake Word Disabled</span>
-                <span style="font-size: 0.75rem; color: #64748B; margin-left: 8px;">Click 🎙️ in composer to dictate</span>
-                """)
-
-        with col_ctl3:
-            if st.button("⏹️ Stop", key="btn_emergency_stop_header", help="Emergency Stop: halts ongoing speech playback and cancels tasks", width="stretch"):
-                api_voice_stop()
-                st.toast("Speech and active audio playback halted.", icon="⏹️")
 
     st.divider()
 
-    # Initial Welcoming Empty State
+    # 2. Initial Welcoming Empty State
     if len(st.session_state.messages) == 0:
         greeting_target = f", {user_display_name}" if user_display_name else ""
         st.html(f"""
         <div class="aira-orb-container">
             <div class="aira-orb"></div>
-            <h2 style="font-size: 1.65rem; font-weight: 700; color: #F8FAFC; margin-bottom: 0.4rem; letter-spacing: -0.02em;">
+            <h2 style="font-size: 1.6rem; font-weight: 700; color: #F8FAFC; margin-bottom: 0.3rem; letter-spacing: -0.02em;">
                 Greetings{greeting_target}.
             </h2>
-            <p style="font-size: 0.96rem; color: #94A3B8; max-width: 540px; margin-bottom: 1.5rem; line-height: 1.5;">
+            <p style="font-size: 0.94rem; color: #94A3B8; max-width: 520px; margin-bottom: 1.4rem; line-height: 1.5;">
                 I'm <strong style="color: #00F0FF;">AIRA</strong>, your adaptive intelligence coworker and personal assistant.
                 How can we collaborate today?
             </p>
@@ -611,7 +645,7 @@ if st.session_state.active_section == "Conversation":
         """)
 
         # 4 Functional Suggested Prompts
-        st.markdown("<p style='text-align: center; font-size: 0.82rem; color: #64748B; margin-bottom: 0.8rem;'>SUGGESTED COLLABORATIONS</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #64748B; margin-bottom: 0.8rem;'>Suggested Collaborations</p>", unsafe_allow_html=True)
         col_p1, col_p2 = st.columns(2)
         with col_p1:
             if st.button(
@@ -651,25 +685,23 @@ if st.session_state.active_section == "Conversation":
                 st.session_state.pending_prompt = "Help me solve a problem: I need a structured step-by-step troubleshooting plan for optimizing latency and reliability."
                 st.rerun()
 
-    # Render Conversation Messages
+    # 3. Render Message History
     for idx, msg in enumerate(st.session_state.messages):
         role = msg["role"]
         is_assistant = (role == "assistant")
         avatar_val = ":material/auto_awesome:" if is_assistant else None
 
         with st.chat_message(role, avatar=avatar_val):
-            # Compact unobtrusive model tag
-            if is_assistant and msg.get("meta"):
-                if st.session_state.show_debug_traces:
-                    st.caption(msg["meta"])
-                else:
-                    # Subtle model pill
-                    engine_label = "Local Gemma 2B" if "gemma" in msg.get("meta", "").lower() else "Cloud Nemotron"
-                    if msg.get("tools_triggered"):
-                        engine_label += " • Tool Assisted"
-                    st.caption(f":grey[{engine_label}]")
+            # Engine and Model pill
+            if is_assistant:
+                engine_text = msg.get("engine") or ("Local Gemma 2B" if "gemma" in msg.get("model", "").lower() else "Cloud Nemotron")
+                model_text = msg.get("model") or ""
+                badge_info = f"{engine_text}" + (f" • `{model_text}`" if model_text and st.session_state.show_debug_traces else "")
+                if msg.get("tools_triggered"):
+                    badge_info += " • Tool Assisted"
+                st.caption(f":grey[{badge_info}]")
 
-            # Tool Execution Expander if debug traces enabled or tools executed
+            # Executed Tools Expander
             if is_assistant and msg.get("executed_tools") and len(msg["executed_tools"]) > 0:
                 with st.expander(f":material/build: Executed {len(msg['executed_tools'])} Tool Action(s)", expanded=False):
                     for t in msg["executed_tools"]:
@@ -677,28 +709,26 @@ if st.session_state.active_section == "Conversation":
                         if t.get("arguments"):
                             st.code(json.dumps(t["arguments"], indent=2), language="json")
 
-            # Main Message Markdown Body
+            # Main Markdown Content (with syntax highlighting and copy support)
             st.markdown(msg["content"])
 
-            # Grounded Sources Breakdown
+            # Grounded Sources & Citations
             if msg.get("sources_used") and len(msg["sources_used"]) > 0:
                 with st.expander(f":material/dataset: Grounded Evidence ({len(msg['sources_used'])} sources)", expanded=False):
                     for src in msg["sources_used"]:
                         st.markdown(f"- {src}")
 
-            # Cross-Source Contradictions Warning
             if msg.get("contradictions") and len(msg["contradictions"]) > 0:
                 for c in msg["contradictions"]:
                     st.warning(f"Discrepancy noted across sources: {c}", icon=":material/warning:")
 
-            # Clean Citations Display
             if msg.get("citations") and len(msg["citations"]) > 0:
                 with st.container():
                     st.markdown("##### :material/link: Grounded Sources & Citations")
                     for cite in msg["citations"]:
                         st.markdown(f"- {cite}")
 
-            # Inline Action Plan Approval Card (If Computer Modification was proposed)
+            # Inline Action Plan Approval Card
             if is_assistant and msg.get("pending_approval"):
                 ap = msg["pending_approval"]
                 with st.container(border=True):
@@ -719,7 +749,7 @@ if st.session_state.active_section == "Conversation":
 
                     col_ap1, col_ap2, _ = st.columns([1, 1, 2])
                     with col_ap1:
-                        if st.button("✅ Approve & Apply Change", key=f"msg_appr_{idx}_{ap['id']}", width="stretch"):
+                        if st.button("✅ Approve", key=f"msg_appr_{idx}_{ap['id']}", width="stretch"):
                             st_code, res = api_post("/api/desktop/approve", {"approval_id": ap["id"], "approved": True})
                             msg["pending_approval"] = None
                             if st_code == 200:
@@ -728,13 +758,13 @@ if st.session_state.active_section == "Conversation":
                                 st.error(f"Execution error: {res.get('detail', 'Unknown error')}")
                             st.rerun()
                     with col_ap2:
-                        if st.button("❌ Reject & Discard", key=f"msg_deny_{idx}_{ap['id']}", width="stretch"):
+                        if st.button("❌ Reject", key=f"msg_deny_{idx}_{ap['id']}", width="stretch"):
                             api_post("/api/desktop/approve", {"approval_id": ap["id"], "approved": False})
                             msg["pending_approval"] = None
-                            st.warning("Action rejected. No modifications made.")
+                            st.warning("Action rejected.")
                             st.rerun()
 
-            # Audio Playback & Interruption for Assistant Responses
+            # Voice Playback & Audio Stop for Assistant Responses
             if is_assistant and msg.get("request_id"):
                 req_id = msg["request_id"]
                 if req_id in st.session_state.audio_cache_by_req_id:
@@ -751,7 +781,7 @@ if st.session_state.active_section == "Conversation":
                 else:
                     col_lis, col_stp = st.columns([2, 1], vertical_alignment="center")
                     with col_lis:
-                        if st.button("🔊 Listen", key=f"btn_listen_{idx}", help="Speak response aloud with natural feminine voice"):
+                        if st.button("🔊 Listen", key=f"btn_listen_{idx}", help="Speak response aloud"):
                             with st.spinner("Synthesizing voice..."):
                                 aud = api_synthesize(
                                     msg["content"],
@@ -764,7 +794,7 @@ if st.session_state.active_section == "Conversation":
                                     st.session_state.newest_audio_req_id = req_id
                                     st.rerun()
                                 else:
-                                    st.warning("Speech synthesis unavailable for this message.")
+                                    st.warning("Speech synthesis unavailable.")
                     with col_stp:
                         if st.button("⏹️ Stop", key=f"btn_stop_bare_{idx}", help="Halt active speech"):
                             api_voice_stop()
@@ -809,56 +839,54 @@ if st.session_state.active_section == "Conversation":
                                 "response": msg["content"],
                             })
                             st.session_state[f"show_feedback_box_{idx}"] = False
-                            st.success("Correction saved. AIRA's verification memory updated.")
+                            st.success("Correction saved.")
                             st.rerun()
 
-    # --------------------------------------------------------------------------
-    # Mandatory Approval Panel for Computer Modifications
-    # --------------------------------------------------------------------------
-    approvals_data = api_get("/api/approvals", [])
-    active_pending = [a for a in approvals_data if a.get("status") == "pending"]
-    if active_pending:
-        for ap in active_pending:
-            with st.container(border=True):
-                st.warning("⚠️ **Proposed Computer Modification — Human Approval Required**", icon=":material/warning:")
-                st.markdown(f"**Action:** `{ap['tool_name']}` &nbsp;|&nbsp; **Risk:** `{ap.get('risk_level', 'HIGH')}`")
-                st.markdown(f"**Plan / Reason:** {ap.get('reason')}")
-                params = ap.get("parameters", {})
-                if "file_path" in params:
-                    st.markdown(f"**Target Resource:** `{params['file_path']}`")
-                if "app_name" in params:
-                    st.markdown(f"**Application:** `{params['app_name']}`")
-                if "diff" in params and params["diff"]:
-                    st.code(params["diff"], language="diff")
-                elif "command" in params and params["command"]:
-                    st.code(params["command"], language="bash")
-                elif "new_content" in params and params["new_content"]:
-                    st.code(params["new_content"][:400], language="python")
+    # 4. Error Handling and Retry Bar
+    if st.session_state.get("last_error_prompt"):
+        err_prompt = st.session_state.last_error_prompt
+        with st.container(border=True):
+            col_err_txt, col_err_retry = st.columns([4, 1], vertical_alignment="center")
+            with col_err_txt:
+                st.error(f"⚠️ Last request encountered an error: \"{err_prompt[:60]}...\"")
+            with col_err_retry:
+                if st.button("🔄 Retry", key="btn_retry_last_error", width="stretch"):
+                    st.session_state.pending_prompt = err_prompt
+                    st.session_state.last_error_prompt = None
+                    st.rerun()
 
-                col_ap1, col_ap2, _ = st.columns([1, 1, 2])
-                with col_ap1:
-                    if st.button("✅ Approve & Apply Change", key=f"chat_appr_{ap['id']}", width="stretch"):
-                        st_code, res = api_post("/api/desktop/approve", {"approval_id": ap["id"], "approved": True})
-                        if st_code == 200:
-                            st.success(f"Change applied: {res.get('outcome', 'Success')}")
-                        else:
-                            st.error(f"Execution error: {res.get('detail', 'Unknown error')}")
-                        st.rerun()
-                with col_ap2:
-                    if st.button("❌ Reject & Discard", key=f"chat_deny_{ap['id']}", width="stretch"):
-                        api_post("/api/desktop/approve", {"approval_id": ap["id"], "approved": False})
-                        st.warning("Action rejected. No modifications were made to your computer.")
-                        st.rerun()
+    # 5. Compact Voice & Interaction Control Strip (Above Composer)
+    with st.container():
+        col_ctl1, col_ctl2, col_ctl3 = st.columns([2, 3, 1], vertical_alignment="center")
+        with col_ctl1:
+            mic_btn_label = "🔴 Recording Voice..." if st.session_state.dictation_active else "🎙️ Dictate Speech"
+            if st.button(mic_btn_label, key="btn_toggle_dictation_mode", help="Click to record speech"):
+                st.session_state.dictation_active = not st.session_state.dictation_active
+                st.rerun()
 
-    # --------------------------------------------------------------------------
-    # Dictation Panel (Mode A: Click-to-Dictate into Chat Composer)
-    # --------------------------------------------------------------------------
+        with col_ctl2:
+            wake_toggle = st.toggle(
+                "Hands-Free 'Hey AIRA'",
+                value=st.session_state.wake_word_enabled,
+                help="Continuous local wake-word detection for 'Hey AIRA'.",
+                key="toggle_wake_word_active"
+            )
+            if wake_toggle != st.session_state.wake_word_enabled:
+                st.session_state.wake_word_enabled = wake_toggle
+                st.session_state.wake_word_state = "listening_locally" if wake_toggle else "wake_word_disabled"
+                st.rerun()
+
+        with col_ctl3:
+            if st.button("⏹️ Stop", key="btn_emergency_stop_header", help="Halts ongoing speech playback", width="stretch"):
+                api_voice_stop()
+                st.toast("Playback stopped.", icon="⏹️")
+
+    # Dictation Audio Input Box (When active)
     if st.session_state.get("dictation_active", False):
         with st.container(border=True):
             col_d_info, col_d_cancel = st.columns([4, 1], vertical_alignment="center")
             with col_d_info:
                 st.markdown("🔴 **Recording Dictation... Speak clearly, then click stop to transcribe.**")
-                st.caption(f"Speech Language: `{st.session_state.selected_language.upper()}` • Populates text field without auto-submitting.")
             with col_d_cancel:
                 if st.button("Cancel", key="btn_cancel_dict_box"):
                     st.session_state.dictation_active = False
@@ -883,72 +911,48 @@ if st.session_state.active_section == "Conversation":
                             )
                             if trans_data.get("success") and trans_data.get("text"):
                                 recognized_speech = trans_data["text"].strip()
-                                # Preserve any previously typed text in the draft
-                                existing_text = st.session_state.get("chat_draft", "").strip()
-                                updated_text = f"{existing_text} {recognized_speech}".strip() if existing_text else recognized_speech
-                                st.session_state.chat_draft = updated_text
+                                st.session_state.pending_prompt = recognized_speech
                                 st.session_state.dictation_active = False
-                                st.toast(f"Dictation transcribed: \"{recognized_speech}\"", icon="🎙️")
+                                st.toast(f"Transcribed: \"{recognized_speech}\"", icon="🎙️")
                                 st.rerun()
                             else:
                                 err_msg = trans_data.get("error") or "No clear speech detected."
-                                st.warning(f"Voice recognition: {err_msg} You can retry or type below.")
+                                st.warning(f"Voice recognition: {err_msg}")
 
-    # --------------------------------------------------------------------------
-    # Redesigned Inline Chat Composer: [ Message AIRA... ] [ Mic ] [ Send ]
-    # --------------------------------------------------------------------------
-    with st.container():
-        col_comp_text, col_comp_mic, col_comp_send = st.columns([10, 1, 1], vertical_alignment="bottom")
-        with col_comp_text:
-            typed_message = st.text_input(
-                "Message AIRA...",
-                value=st.session_state.get("chat_draft", ""),
-                placeholder="Message AIRA, explore ideas, or automate Mac...",
-                key="aira_composer_text_input",
-                label_visibility="collapsed",
-            )
-            # Sync user typing to draft session state
-            if typed_message != st.session_state.get("chat_draft", ""):
-                st.session_state.chat_draft = typed_message
-
-        with col_comp_mic:
-            mic_label = "🔴" if st.session_state.get("dictation_active", False) else "🎙️"
-            if st.button(mic_label, key="btn_composer_dictate_mic", help="Click to dictate speech into text field", width="stretch"):
-                st.session_state.dictation_active = not st.session_state.get("dictation_active", False)
-                st.rerun()
-
-        with col_comp_send:
-            send_clicked = st.button("🚀", key="btn_composer_send_msg", help="Send message to AIRA", width="stretch")
+    # 6. Fixed-Bottom Chat Input Composer
+    typed_prompt = st.chat_input("Message AIRA, explore ideas, or automate Mac...", key="aira_main_chat_input")
 
     # Resolve Prompt to Send
     prompt_to_send = None
-    if send_clicked and st.session_state.get("chat_draft", "").strip():
-        prompt_to_send = st.session_state.chat_draft.strip()
-        st.session_state.chat_draft = ""
+    if typed_prompt and typed_prompt.strip():
+        prompt_to_send = typed_prompt.strip()
     elif st.session_state.pending_prompt:
         prompt_to_send = st.session_state.pending_prompt
         st.session_state.pending_prompt = None
 
     if prompt_to_send:
-        # Append User Message
+        # Optimistically append user message to local state
         st.session_state.messages.append({"role": "user", "content": prompt_to_send})
+
         with st.chat_message("user"):
             st.markdown(prompt_to_send)
 
-        # Execute Backend Query
+        # Execute Dual-Engine AI Request
         with st.chat_message("assistant", avatar=":material/auto_awesome:"):
             with st.status(":shimmer[AIRA is thinking...]", type="compact") as status_box:
                 payload = {
                     "prompt": prompt_to_send,
-                    "session_id": st.session_state.session_id,
+                    "session_id": st.session_state.conversation_id,
                     "project_id": st.session_state.active_project,
                     "privacy_mode": st.session_state.privacy_mode,
                 }
                 status_code, response = api_post("/api/chat", payload)
 
                 if status_code == 200:
+                    st.session_state.last_error_prompt = None
                     model = response.get("model_used", "Local/Cloud")
                     complexity = response.get("complexity", "standard")
+                    target_engine = response.get("target_engine", "local")
                     tools_used = response.get("tools_triggered", False)
                     executed_tools = response.get("executed_tools", [])
                     citations = response.get("citations", [])
@@ -959,16 +963,12 @@ if st.session_state.active_section == "Conversation":
                     reason = response.get("routing_reason", "")
                     category = response.get("intent_category", "conversation")
 
-                    meta_desc = f"Engine: `{model}` ({complexity.title()} • {category.replace('_', ' ').title()})"
                     status_box.update(label=f"Responded via {model}", state="complete")
 
-                    if st.session_state.show_debug_traces:
-                        st.caption(meta_desc)
-                    else:
-                        engine_badge = "Local Gemma 2B" if "gemma" in model.lower() else "Cloud Nemotron"
-                        if tools_used:
-                            engine_badge += " • Tool Assisted"
-                        st.caption(f":grey[{engine_badge}]")
+                    engine_badge = "Local Gemma 2B" if "gemma" in model.lower() else "Cloud Nemotron"
+                    if tools_used:
+                        engine_badge += " • Tool Assisted"
+                    st.caption(f":grey[{engine_badge}]")
 
                     st.markdown(answer)
 
@@ -977,7 +977,7 @@ if st.session_state.active_section == "Conversation":
                         for cite in citations:
                             st.markdown(f"- {cite}")
 
-                    # Voice Output: Synthesize spoken response if enabled
+                    # Speech Synthesis if voice output enabled
                     if st.session_state.voice_output_enabled and answer:
                         audio_data = api_synthesize(
                             answer,
@@ -989,10 +989,16 @@ if st.session_state.active_section == "Conversation":
                             st.session_state.audio_cache_by_req_id[req_id] = audio_data
                             st.session_state.newest_audio_req_id = req_id
 
+                    # Reload conversation title if auto-generated by backend
+                    conv_info = api_get(f"/api/conversations/{st.session_state.conversation_id}")
+                    if conv_info and conv_info.get("title"):
+                        st.session_state.current_conv_title = conv_info["title"]
+
                     st.session_state.messages.append({
                         "role": "assistant",
                         "content": answer,
-                        "meta": meta_desc,
+                        "engine": target_engine,
+                        "model": model,
                         "request_id": req_id,
                         "prompt": prompt_to_send,
                         "tools_triggered": tools_used,
@@ -1008,156 +1014,11 @@ if st.session_state.active_section == "Conversation":
                     status_box.update(label="Request failed", state="error")
                     err_msg = response.get("detail") or response.get("error") or "Internal communication error."
                     st.error(f"AIRA Engine Error ({status_code}): {err_msg}")
+                    st.session_state.last_error_prompt = prompt_to_send
 
 
 # ==============================================================================
-# SECTION 2: MEMORY & PREFERENCES WORKSPACE
-# ==============================================================================
-elif st.session_state.active_section == "Memory & Preferences":
-    st.html("""
-    <div class="aira-workspace-header">
-        <div>
-            <div class="aira-workspace-title">Personal Memory & Learned Preferences</div>
-            <div class="aira-workspace-subtitle">Inspect, refine, or remove information AIRA has learned through real interaction.</div>
-        </div>
-    </div>
-    """)
-
-    mem_tab1, mem_tab2, mem_tab3, mem_tab4, mem_tab5 = st.tabs([
-        "👤 Personal Profile",
-        "💡 Behavioral Preferences",
-        "📖 Episodic Interactions",
-        "⚙️ Procedural Knowledge",
-        "💾 Memory Export",
-    ])
-
-    # 1. Profile Tab
-    with mem_tab1:
-        st.markdown("##### Explicit Profile Attributes")
-        st.caption("Factual attributes configured by you or confirmed during conversation.")
-
-        profile_dict = api_get("/api/memory?category=profile", {})
-
-        col_pr1, col_pr2 = st.columns([1, 1])
-        with col_pr1:
-            with st.container(border=True):
-                st.markdown("**Current Stored Attributes**")
-                display_name_val = profile_dict.get("preferred_name") or user_display_name
-                st.markdown(f"**Preferred Name:** {display_name_val if display_name_val else '*Not specified yet*'}")
-                st.markdown(f"**Communication Style:** {profile_dict.get('communication_style') or '*Adaptive default*'}")
-                st.markdown(f"**Primary Interests:** {profile_dict.get('primary_interests') or '*Not configured*'}")
-                st.markdown(f"**Technical Background:** {profile_dict.get('technical_background') or '*General / Not specified*'}")
-                st.markdown(f"**Active Learning Goals:** {profile_dict.get('learning_goals') or '*None specified*'}")
-
-        with col_pr2:
-            with st.container(border=True):
-                st.markdown("**Update Profile Attribute**")
-                with st.form("form_update_profile"):
-                    attr_field = st.selectbox(
-                        "Attribute",
-                        ["preferred_name", "communication_style", "primary_interests", "technical_background", "learning_goals"],
-                        format_func=lambda x: x.replace("_", " ").title(),
-                    )
-                    attr_val = st.text_input("New Value")
-                    submitted_attr = st.form_submit_button("Save Attribute", width="stretch")
-                    if submitted_attr and attr_val.strip():
-                        if attr_field == "preferred_name":
-                            api_post("/api/user-profile/name", {"name": attr_val.strip()})
-                        # Also persist in memory repository
-                        requests.post(f"{BACKEND_URL}/api/memory", json={"key": attr_field, "value": attr_val.strip()})
-                        st.success(f"Updated {attr_field.replace('_', ' ').title()}.")
-                        st.rerun()
-
-                if user_display_name:
-                    if st.button("Reset User Name", width="content"):
-                        api_delete("/api/user-profile/name")
-                        st.info("User name cleared.")
-                        st.rerun()
-
-    # 2. Preferences Tab
-    with mem_tab2:
-        st.markdown("##### Inferred & Confirmed Preferences")
-        st.caption("Preferences inferred from interaction evidence remain candidates until verified.")
-
-        pref_list = api_get("/api/memory?category=preferences", [])
-        if pref_list and len(pref_list) > 0:
-            for p in pref_list:
-                with st.container(border=True):
-                    col_pf1, col_pf2 = st.columns([4, 1], vertical_alignment="center")
-                    with col_pf1:
-                        badge_html = '<span class="aira-badge aira-badge-green">● Confirmed</span>' if p.get("user_approved") else '<span class="aira-badge aira-badge-amber">● Candidate (Inferred)</span>'
-                        st.html(f"<div><strong style='font-size: 1.05rem; color: #F8FAFC;'>{p['preference_key']}</strong> &nbsp; {badge_html}</div>")
-                        st.markdown(f"**Preference Value:** {p['preference_value']}")
-                        if p.get("supporting_observations"):
-                            st.caption(f"Supporting Evidence: {p['supporting_observations']}")
-
-                    with col_pf2:
-                        if not p.get("user_approved"):
-                            if st.button("Confirm", key=f"appr_btn_{p['id']}", width="stretch"):
-                                requests.post(f"{BACKEND_URL}/api/preferences/{p['id']}/approve")
-                                st.rerun()
-                        if st.button("Remove", key=f"del_pref_btn_{p['id']}", width="stretch"):
-                            requests.delete(f"{BACKEND_URL}/api/memory/preferences/{p['id']}")
-                            st.rerun()
-        else:
-            st.info("No behavioral preferences recorded yet. They will emerge naturally through conversation.")
-
-    # 3. Episodic Interactions Tab
-    with mem_tab3:
-        st.markdown("##### Significant Episodic Interactions")
-        st.caption("Key conversation summaries, milestone decisions, and learning moments.")
-
-        episodic_records = api_get("/api/memory?category=episodic", [])
-        if episodic_records and len(episodic_records) > 0:
-            for ep in episodic_records[:12]:
-                with st.container(border=True):
-                    col_ep1, col_ep2 = st.columns([5, 1])
-                    with col_ep1:
-                        st.markdown(f"**{ep['title']}** &nbsp;•&nbsp; :grey[{ep['event_type'].title()}]")
-                        st.markdown(ep["content"])
-                        st.caption(f"Recorded: {ep['created_at'][:19]}")
-                    with col_ep2:
-                        if st.button("Delete", key=f"del_ep_btn_{ep['id']}", width="stretch"):
-                            requests.delete(f"{BACKEND_URL}/api/memory/episodic/{ep['id']}")
-                            st.rerun()
-        else:
-            st.info("No episodic memories stored yet.")
-
-    # 4. Procedural Knowledge Tab
-    with mem_tab4:
-        st.markdown("##### Procedural Knowledge & Workflows")
-        st.caption("Habitual workflows, specialized instructions, and recurring tasks.")
-
-        procedural_records = api_get("/api/memory?category=procedural", [])
-        if procedural_records and len(procedural_records) > 0:
-            for proc in procedural_records:
-                with st.container(border=True):
-                    st.markdown(f"**{proc['workflow_name']}**")
-                    st.markdown(proc["steps"])
-                    if st.button("Delete Workflow", key=f"del_proc_{proc['id']}"):
-                        requests.delete(f"{BACKEND_URL}/api/memory/procedural/{proc['id']}")
-                        st.rerun()
-        else:
-            st.info("No procedural workflows indexed yet.")
-
-    # 5. Export Tab
-    with mem_tab5:
-        st.markdown("##### Export Memory Vault")
-        st.caption("Download an encrypted or portable JSON copy of all personal memory stores.")
-
-        export_data = api_get("/api/memory?category=export", {})
-        st.download_button(
-            label="Download Complete Memory Vault (JSON)",
-            data=json.dumps(export_data, indent=2),
-            file_name="aira_memory_vault.json",
-            mime="application/json",
-            icon=":material/download:",
-            width="content",
-        )
-
-
-# ==============================================================================
-# SECTION 3: PROJECT WORKSPACES
+# SECTION 2: PROJECTS WORKSPACE
 # ==============================================================================
 elif st.session_state.active_section == "Projects":
     st.html("""
@@ -1178,7 +1039,7 @@ elif st.session_state.active_section == "Projects":
                 col_pj1, col_pj2 = st.columns([4, 1])
                 with col_pj1:
                     active_badge = '<span class="aira-badge aira-badge-cyan">● Active Workspace</span>' if is_active else ''
-                    st.html(f"<div><span style='font-size: 1.25rem; font-weight: 700; color: #F8FAFC;'>{p['name']}</span> &nbsp; <code>{p['id']}</code> &nbsp; {active_badge}</div>")
+                    st.html(f"<div><span style='font-size: 1.2rem; font-weight: 700; color: #F8FAFC;'>{p['name']}</span> &nbsp; <code>{p['id']}</code> &nbsp; {active_badge}</div>")
                     if p.get("purpose"):
                         st.markdown(f"**Purpose:** {p['purpose']}")
                     if p.get("tech_stack") and len(p["tech_stack"]) > 0:
@@ -1243,7 +1104,7 @@ elif st.session_state.active_section == "Projects":
 
 
 # ==============================================================================
-# SECTION 4: KNOWLEDGE BASE / RAG WORKSPACE
+# SECTION 3: KNOWLEDGE BASE WORKSPACE
 # ==============================================================================
 elif st.session_state.active_section == "Knowledge Base":
     st.html("""
@@ -1366,7 +1227,7 @@ elif st.session_state.active_section == "Knowledge Base":
             st.caption("Multi-query search, readable page fetching, SSRF filtering, and contradiction analysis.")
 
             if st.session_state.privacy_mode == "local_only":
-                st.warning("🔒 Internet Research is blocked because Local-Only Privacy Mode is active. Switch to Standard in the sidebar to run web research.", icon=":material/lock:")
+                st.warning("🔒 Internet Research is blocked because Local-Only Privacy Mode is active. Switch to Standard in Settings to run web research.", icon=":material/lock:")
             else:
                 col_wq, col_wbtn = st.columns([3, 1], vertical_alignment="bottom")
                 with col_wq:
@@ -1412,31 +1273,325 @@ elif st.session_state.active_section == "Knowledge Base":
 
 
 # ==============================================================================
-# SECTION 5: SAFEGUARDS WORKSPACE
+# SECTION 4: MEMORY & PREFERENCES WORKSPACE
 # ==============================================================================
-elif st.session_state.active_section == "Safeguards":
+elif st.session_state.active_section == "Memory & Preferences":
     st.html("""
     <div class="aira-workspace-header">
         <div>
-            <div class="aira-workspace-title">Operational Safeguards & Identity Constitution</div>
-            <div class="aira-workspace-subtitle">Seven core laws enforced at the Python execution layer to ensure safety, alignment, and transparency.</div>
+            <div class="aira-workspace-title">Personal Memory & Learned Preferences</div>
+            <div class="aira-workspace-subtitle">Inspect, refine, or remove information AIRA has learned through real interaction.</div>
         </div>
     </div>
     """)
 
-    safe_tab1, safe_tab2, safe_tab3 = st.tabs([
-        "🛡️ Constitutional Principles",
-        "✋ Pending Human Approvals",
-        "📜 Security Audit Trail",
+    mem_tab1, mem_tab2, mem_tab3, mem_tab4, mem_tab5 = st.tabs([
+        "👤 Personal Profile",
+        "💡 Behavioral Preferences",
+        "📖 Episodic Interactions",
+        "⚙️ Procedural Knowledge",
+        "💾 Memory Export",
     ])
 
-    with safe_tab1:
+    with mem_tab1:
+        st.markdown("##### Explicit Profile Attributes")
+        st.caption("Factual attributes configured by you or confirmed during conversation.")
+
+        profile_dict = api_get("/api/memory?category=profile", {})
+
+        col_pr1, col_pr2 = st.columns([1, 1])
+        with col_pr1:
+            with st.container(border=True):
+                st.markdown("**Current Stored Attributes**")
+                display_name_val = profile_dict.get("preferred_name") or user_display_name
+                st.markdown(f"**Preferred Name:** {display_name_val if display_name_val else '*Not specified yet*'}")
+                st.markdown(f"**Communication Style:** {profile_dict.get('communication_style') or '*Adaptive default*'}")
+                st.markdown(f"**Primary Interests:** {profile_dict.get('primary_interests') or '*Not configured*'}")
+                st.markdown(f"**Technical Background:** {profile_dict.get('technical_background') or '*General / Not specified*'}")
+                st.markdown(f"**Active Learning Goals:** {profile_dict.get('learning_goals') or '*None specified*'}")
+
+        with col_pr2:
+            with st.container(border=True):
+                st.markdown("**Update Profile Attribute**")
+                with st.form("form_update_profile"):
+                    attr_field = st.selectbox(
+                        "Attribute",
+                        ["preferred_name", "communication_style", "primary_interests", "technical_background", "learning_goals"],
+                        format_func=lambda x: x.replace("_", " ").title(),
+                    )
+                    attr_val = st.text_input("New Value")
+                    submitted_attr = st.form_submit_button("Save Attribute", width="stretch")
+                    if submitted_attr and attr_val.strip():
+                        if attr_field == "preferred_name":
+                            api_post("/api/user-profile/name", {"name": attr_val.strip()})
+                        requests.post(f"{BACKEND_URL}/api/memory", json={"key": attr_field, "value": attr_val.strip()})
+                        st.success(f"Updated {attr_field.replace('_', ' ').title()}.")
+                        st.rerun()
+
+                if user_display_name:
+                    if st.button("Reset User Name", width="content"):
+                        api_delete("/api/user-profile/name")
+                        st.info("User name cleared.")
+                        st.rerun()
+
+    with mem_tab2:
+        st.markdown("##### Inferred & Confirmed Preferences")
+        st.caption("Preferences inferred from interaction evidence remain candidates until verified.")
+
+        pref_list = api_get("/api/memory?category=preferences", [])
+        if pref_list and len(pref_list) > 0:
+            for p in pref_list:
+                with st.container(border=True):
+                    col_pf1, col_pf2 = st.columns([4, 1], vertical_alignment="center")
+                    with col_pf1:
+                        badge_html = '<span class="aira-badge aira-badge-green">● Confirmed</span>' if p.get("user_approved") else '<span class="aira-badge aira-badge-amber">● Candidate (Inferred)</span>'
+                        st.html(f"<div><strong style='font-size: 1.05rem; color: #F8FAFC;'>{p['preference_key']}</strong> &nbsp; {badge_html}</div>")
+                        st.markdown(f"**Preference Value:** {p['preference_value']}")
+                        if p.get("supporting_observations"):
+                            st.caption(f"Supporting Evidence: {p['supporting_observations']}")
+
+                    with col_pf2:
+                        if not p.get("user_approved"):
+                            if st.button("Confirm", key=f"appr_btn_{p['id']}", width="stretch"):
+                                requests.post(f"{BACKEND_URL}/api/preferences/{p['id']}/approve")
+                                st.rerun()
+                        if st.button("Remove", key=f"del_pref_btn_{p['id']}", width="stretch"):
+                            requests.delete(f"{BACKEND_URL}/api/memory/preferences/{p['id']}")
+                            st.rerun()
+        else:
+            st.info("No behavioral preferences recorded yet. They will emerge naturally through conversation.")
+
+    with mem_tab3:
+        st.markdown("##### Significant Episodic Interactions")
+        st.caption("Key conversation summaries, milestone decisions, and learning moments.")
+
+        episodic_records = api_get("/api/memory?category=episodic", [])
+        if episodic_records and len(episodic_records) > 0:
+            for ep in episodic_records[:12]:
+                with st.container(border=True):
+                    col_ep1, col_ep2 = st.columns([5, 1])
+                    with col_ep1:
+                        st.markdown(f"**{ep['title']}** &nbsp;•&nbsp; :grey[{ep['event_type'].title()}]")
+                        st.markdown(ep["content"])
+                        st.caption(f"Recorded: {ep['created_at'][:19]}")
+                    with col_ep2:
+                        if st.button("Delete", key=f"del_ep_btn_{ep['id']}", width="stretch"):
+                            requests.delete(f"{BACKEND_URL}/api/memory/episodic/{ep['id']}")
+                            st.rerun()
+        else:
+            st.info("No episodic memories stored yet.")
+
+    with mem_tab4:
+        st.markdown("##### Procedural Knowledge & Workflows")
+        st.caption("Habitual workflows, specialized instructions, and recurring tasks.")
+
+        procedural_records = api_get("/api/memory?category=procedural", [])
+        if procedural_records and len(procedural_records) > 0:
+            for proc in procedural_records:
+                with st.container(border=True):
+                    st.markdown(f"**{proc['workflow_name']}**")
+                    st.markdown(proc["steps"])
+                    if st.button("Delete Workflow", key=f"del_proc_{proc['id']}"):
+                        requests.delete(f"{BACKEND_URL}/api/memory/procedural/{proc['id']}")
+                        st.rerun()
+        else:
+            st.info("No procedural workflows indexed yet.")
+
+    with mem_tab5:
+        st.markdown("##### Export Memory Vault")
+        st.caption("Download an encrypted or portable JSON copy of all personal memory stores.")
+
+        export_data = api_get("/api/memory?category=export", {})
+        st.download_button(
+            label="Download Complete Memory Vault (JSON)",
+            data=json.dumps(export_data, indent=2),
+            file_name="aira_memory_vault.json",
+            mime="application/json",
+            icon=":material/download:",
+            width="content",
+        )
+
+
+# ==============================================================================
+# SECTION 5: SETTINGS & ADVANCED CONTROLS
+# ==============================================================================
+elif st.session_state.active_section == "Settings":
+    st.html("""
+    <div class="aira-workspace-header">
+        <div>
+            <div class="aira-workspace-title">Settings & Operational Controls</div>
+            <div class="aira-workspace-subtitle">Configure security boundaries, audio personas, runtime telemetry, and constitutional safeguards.</div>
+        </div>
+    </div>
+    """)
+
+    set_tab_sec, set_tab_voice, set_tab_diag, set_tab_safe = st.tabs([
+        "🔒 Security & Privacy",
+        "🎙️ Voice & Audio Settings",
+        "💻 System & Diagnostics",
+        "🛡️ Constitutional Safeguards",
+    ])
+
+    # 1. Security & Privacy Tab
+    with set_tab_sec:
+        with st.container(border=True):
+            st.markdown("##### :material/shield: Operational Privacy Mode")
+            st.caption("Control whether requests can be routed to cloud models (Nemotron-3) or are restricted to local on-device Gemma.")
+
+            is_local = (st.session_state.privacy_mode == "local_only")
+            new_local = st.toggle(
+                "Local-Only Privacy Mode",
+                value=is_local,
+                help="When enabled, zero data leaves this device. All inference runs locally via Ollama / Gemma."
+            )
+            st.session_state.privacy_mode = "local_only" if new_local else "standard"
+
+            if new_local:
+                st.success("🔒 Strict Local Privacy Active: External APIs, web research, and cloud engines are disabled.")
+            else:
+                st.info("🌐 Standard Hybrid Mode Active: Complex reasoning is routed to cloud Nemotron; quick conversational queries run on local Gemma.")
+
+            st.divider()
+
+            st.markdown("##### :material/bug_report: Execution & Telemetry Traces")
+            st.session_state.show_debug_traces = st.toggle(
+                "Show Engine Routing & Latency Traces in Chat",
+                value=st.session_state.show_debug_traces,
+                help="Displays exact model IDs, latency timings, and tool arguments below each assistant message."
+            )
+
+    # 2. Voice & Audio Settings Tab
+    with set_tab_voice:
+        with st.container(border=True):
+            st.markdown("##### :material/volume_up: Spoken Responses (TTS)")
+            st.session_state.voice_output_enabled = st.toggle(
+                "Enable Speech Generation",
+                value=st.session_state.voice_output_enabled,
+                help="Synthesizes voice audio for assistant answers."
+            )
+
+            st.divider()
+
+            st.markdown("##### :material/mic: Speech Recognition & Voice Personas")
+            st.session_state.selected_language = st.selectbox(
+                "Speech Recognition Language",
+                options=["auto", "en", "hi", "mr"],
+                format_func=lambda x: {
+                    "auto": "🌐 Auto-Detect Language",
+                    "en": "🇬🇧 English",
+                    "hi": "🇮🇳 Hindi (हिंदी)",
+                    "mr": "🇮🇳 Marathi (मराठी)",
+                }.get(x, x),
+                index=["auto", "en", "hi", "mr"].index(st.session_state.selected_language),
+                help="Configures Faster-Whisper model language mode.",
+                key="settings_speech_lang_select"
+            )
+
+            voice_cfg = api_get("/api/voice/config", {"available_voices": [{"id": "Samantha", "name": "Samantha (US Female)"}]})
+            avail_voices = voice_cfg.get("available_voices", [])
+            voice_ids = [v["id"] for v in avail_voices] if avail_voices else ["Samantha"]
+            curr_v_idx = voice_ids.index(st.session_state.selected_voice) if st.session_state.selected_voice in voice_ids else 0
+            st.session_state.selected_voice = st.selectbox(
+                "Voice Persona",
+                options=voice_ids,
+                format_func=lambda vid: next((v["name"] for v in avail_voices if v["id"] == vid), vid),
+                index=curr_v_idx,
+                help="Select synthetic voice persona for spoken replies.",
+                key="settings_voice_select"
+            )
+
+            st.divider()
+
+            st.markdown("##### :material/record_voice_over: Hands-Free Wake-Word Detection")
+            wake_sett = st.toggle(
+                "Listen for 'Hey AIRA'",
+                value=st.session_state.wake_word_enabled,
+                help="Local on-device listener for the 'Hey AIRA' wake phrase.",
+                key="settings_wake_word_toggle"
+            )
+            if wake_sett != st.session_state.wake_word_enabled:
+                st.session_state.wake_word_enabled = wake_sett
+                st.session_state.wake_word_state = "listening_locally" if wake_sett else "wake_word_disabled"
+                st.rerun()
+
+            st.caption("Wake Phrase: `'Hey AIRA'` • Hardware: `Default Microphone` • Engine: `Local Faster-Whisper`")
+
+    # 3. System & Diagnostics Tab
+    with set_tab_diag:
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        with col_m1:
+            with st.container(border=True):
+                st.markdown("**FastAPI Backend**")
+                if is_healthy:
+                    st.html('<span class="aira-badge aira-badge-green">● HEALTHY</span>')
+                else:
+                    st.html('<span class="aira-badge aira-badge-amber">● OFFLINE</span>')
+                st.caption(f"Port 8080 • v{health_data.get('version', '1.0.0')}")
+
+        with col_m2:
+            with st.container(border=True):
+                st.markdown("**Local Engine**")
+                if local_engine_online:
+                    st.html('<span class="aira-badge aira-badge-green">● ACTIVE</span>')
+                else:
+                    st.html('<span class="aira-badge aira-badge-amber">● STANDBY</span>')
+                st.caption("Gemma 2B • Ollama")
+
+        with col_m3:
+            with st.container(border=True):
+                st.markdown("**Cloud Engine**")
+                if cloud_engine_online:
+                    st.html('<span class="aira-badge aira-badge-cyan">● CONNECTED</span>')
+                else:
+                    st.html('<span class="aira-badge aira-badge-amber">● OFFLINE</span>')
+                st.caption("Nemotron-70B • OpenRouter")
+
+        with col_m4:
+            with st.container(border=True):
+                st.markdown("**Persistent DB**")
+                st.html('<span class="aira-badge aira-badge-violet">● INITIALIZED</span>')
+                st.caption("SQLite + RAG Index")
+
+        st.divider()
+
+        # Feedback Quality Metrics
+        st.markdown("##### Feedback & Quality Metrics")
+        fb_stats = api_get("/api/feedback/metrics", {})
+        col_fb1, col_fb2, col_fb3 = st.columns(3)
+        col_fb1.metric("Responses Rated", fb_stats.get("total_responses_rated", 0))
+        pos_rate = fb_stats.get("positive_rate", 1.0) * 100
+        col_fb2.metric("Helpful Rate", f"{pos_rate:.1f}%")
+        col_fb3.metric("Issues Reported", fb_stats.get("negative_count", 0))
+
+        st.divider()
+
+        # Automated Benchmark Verification Suite
+        st.markdown("##### Automated Verification Benchmark Suite")
+        st.caption("Executes standard test queries across intent routing, boundary safety, and tool delegation.")
+
+        if st.button("Run Verification Suite", width="content", icon=":material/play_circle:"):
+            with st.spinner("Executing benchmark evaluation suite..."):
+                status_code, bench_report = api_post("/api/evaluation/run", {})
+                if status_code == 200:
+                    acc = bench_report.get("accuracy_pct", 0)
+                    st.success(f"Benchmark Complete! Accuracy Score: **{acc}%**")
+
+                    results_list = bench_report.get("results", [])
+                    for br in results_list:
+                        passed = br.get("passed", False)
+                        icon = "✅" if passed else "❌"
+                        st.markdown(f"{icon} `{br.get('id')}` ({br.get('category')}) — {br.get('details')}")
+                else:
+                    st.error("Benchmark execution encountered an error.")
+
+    # 4. Constitutional Safeguards Tab
+    with set_tab_safe:
+        st.markdown("##### The Seven Principles of AIRA")
         constitution_data = api_get("/api/constitution", {})
         principles = constitution_data.get("principles", [])
 
         col_c1, col_c2 = st.columns([3, 2])
         with col_c1:
-            st.markdown("##### The Seven Principles of AIRA")
             for p in principles:
                 with st.container(border=True):
                     st.markdown(f"**Principle {p['id']}: {p['name']}**")
@@ -1454,33 +1609,8 @@ elif st.session_state.active_section == "Safeguards":
                 st.caption(f"Version: `{constitution_data.get('version', '1.0.0')}`")
                 st.caption("Immutable runtime policy: Execution engine validates every tool action prior to invocation.")
 
-    with safe_tab2:
-        st.markdown("##### Operations Requiring Human Confirmation")
-        st.caption("High-risk operations (destructive file writes, command execution, test runs) are paused until approved.")
+        st.divider()
 
-        approvals_list = api_get("/api/approvals", [])
-        pending_approvals = [a for a in approvals_list if a.get("status") == "pending"]
-
-        if pending_approvals and len(pending_approvals) > 0:
-            for ap in pending_approvals:
-                with st.container(border=True):
-                    st.warning(f"**Action Paused:** `{ap['tool_name']}` (Risk: `{ap['risk_level'].upper()}`)")
-                    st.markdown(f"**Reason:** {ap['reason']}")
-                    st.code(json.dumps(ap.get("parameters", {}), indent=2), language="json")
-
-                    col_ap1, col_ap2, _ = st.columns([1, 1, 4])
-                    with col_ap1:
-                        if st.button("Approve Action", key=f"appr_{ap['id']}", width="stretch"):
-                            api_post("/api/approvals/resolve", {"approval_id": ap["id"], "approved": True})
-                            st.rerun()
-                    with col_ap2:
-                        if st.button("Deny Action", key=f"deny_{ap['id']}", width="stretch"):
-                            api_post("/api/approvals/resolve", {"approval_id": ap["id"], "approved": False})
-                            st.rerun()
-        else:
-            st.success("All operational boundaries secure. No actions awaiting human approval.")
-
-    with safe_tab3:
         st.markdown("##### Security Audit Trail")
         st.caption("Chronological record of tool decisions, policy checks, and boundary enforcements.")
 
@@ -1498,86 +1628,3 @@ elif st.session_state.active_section == "Safeguards":
             st.dataframe(log_records, width="stretch", hide_index=True)
         else:
             st.info("No audit entries recorded yet.")
-
-
-# ==============================================================================
-# SECTION 6: SYSTEM & DIAGNOSTICS WORKSPACE
-# ==============================================================================
-elif st.session_state.active_section == "System & Diagnostics":
-    st.html("""
-    <div class="aira-workspace-header">
-        <div>
-            <div class="aira-workspace-title">System & Diagnostic Status</div>
-            <div class="aira-workspace-subtitle">Live health telemetry, model engine status, response metrics, and benchmark verification.</div>
-        </div>
-    </div>
-    """)
-
-    # Live Status Telemetry Grid
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-
-    with col_m1:
-        with st.container(border=True):
-            st.markdown("**FastAPI Backend**")
-            if is_healthy:
-                st.html('<span class="aira-badge aira-badge-green">● HEALTHY</span>')
-            else:
-                st.html('<span class="aira-badge aira-badge-amber">● OFFLINE</span>')
-            st.caption(f"Port 8080 • v{health_data.get('version', '1.0.0')}")
-
-    with col_m2:
-        with st.container(border=True):
-            st.markdown("**Local Engine**")
-            if local_engine_online:
-                st.html('<span class="aira-badge aira-badge-green">● ACTIVE</span>')
-            else:
-                st.html('<span class="aira-badge aira-badge-amber">● STANDBY</span>')
-            st.caption("Gemma 2B • Ollama")
-
-    with col_m3:
-        with st.container(border=True):
-            st.markdown("**Cloud Engine**")
-            if cloud_engine_online:
-                st.html('<span class="aira-badge aira-badge-cyan">● CONNECTED</span>')
-            else:
-                st.html('<span class="aira-badge aira-badge-amber">● OFFLINE</span>')
-            st.caption("Nemotron-70B • OpenRouter")
-
-    with col_m4:
-        with st.container(border=True):
-            st.markdown("**Memory & Vector DB**")
-            st.html('<span class="aira-badge aira-badge-violet">● INITIALIZED</span>')
-            st.caption("SQLite + Persistent RAG")
-
-    st.divider()
-
-    # Feedback Analytics
-    st.markdown("##### Feedback & Quality Metrics")
-    fb_stats = api_get("/api/feedback/metrics", {})
-
-    col_fb1, col_fb2, col_fb3 = st.columns(3)
-    col_fb1.metric("Responses Rated", fb_stats.get("total_responses_rated", 0))
-    pos_rate = fb_stats.get("positive_rate", 1.0) * 100
-    col_fb2.metric("Helpful Rate", f"{pos_rate:.1f}%")
-    col_fb3.metric("Issues Reported", fb_stats.get("negative_count", 0))
-
-    st.divider()
-
-    # Verification Benchmark Runner
-    st.markdown("##### Automated Verification Benchmark Suite")
-    st.caption("Executes standard test queries across intent routing, boundary safety, and tool delegation.")
-
-    if st.button("Run Verification Suite", width="content", icon=":material/play_circle:"):
-        with st.spinner("Executing benchmark evaluation suite..."):
-            status_code, bench_report = api_post("/api/evaluation/run", {})
-            if status_code == 200:
-                acc = bench_report.get("accuracy_pct", 0)
-                st.success(f"Benchmark Complete! Accuracy Score: **{acc}%**")
-
-                results_list = bench_report.get("results", [])
-                for br in results_list:
-                    passed = br.get("passed", False)
-                    icon = "✅" if passed else "❌"
-                    st.markdown(f"{icon} `{br.get('id')}` ({br.get('category')}) — {br.get('details')}")
-            else:
-                st.error("Benchmark execution encountered an error.")
