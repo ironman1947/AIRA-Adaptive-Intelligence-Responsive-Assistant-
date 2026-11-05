@@ -1,10 +1,32 @@
 """Global pytest configuration and hermetic test fixtures for AIRA."""
 
+import os
 import sys
 import json
 import io
 from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
+import starlette.testclient
+
+# Configure non-production deterministic test API token
+TEST_API_TOKEN = os.getenv("AIRA_API_TOKEN", "test-token-aira-secret-key-ci-42")
+os.environ.setdefault("AIRA_API_TOKEN", TEST_API_TOKEN)
+
+# Automatically attach Bearer auth to TestClient requests unless explicitly opted out
+_orig_testclient_init = starlette.testclient.TestClient.__init__
+
+
+def _patched_testclient_init(self, app, *args, **kwargs):
+    headers = dict(kwargs.get("headers") or {})
+    if "authorization" not in (k.lower() for k in headers) and not kwargs.pop("no_default_auth", False):
+        current_token = os.getenv("AIRA_API_TOKEN", TEST_API_TOKEN)
+        if current_token:
+            headers["Authorization"] = f"Bearer {current_token}"
+    kwargs["headers"] = headers
+    _orig_testclient_init(self, app, *args, **kwargs)
+
+
+starlette.testclient.TestClient.__init__ = _patched_testclient_init
 
 # 1. Stub sounddevice if PortAudio library is missing or import fails
 try:

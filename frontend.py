@@ -13,6 +13,7 @@ import requests
 import streamlit as st
 
 BACKEND_URL = os.getenv("AIRA_BACKEND_URL", "http://localhost:8080")
+AIRA_API_TOKEN = os.getenv("AIRA_API_TOKEN", "")
 
 # ------------------------------------------------------------------------------
 # Page Configuration
@@ -221,9 +222,19 @@ st.html(CUSTOM_CSS)
 # ------------------------------------------------------------------------------
 # API Helpers
 # ------------------------------------------------------------------------------
+def get_auth_headers(extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Generates server-side Authorization headers for backend requests."""
+    headers = {}
+    token = os.getenv("AIRA_API_TOKEN") or AIRA_API_TOKEN
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if extra_headers:
+        headers.update(extra_headers)
+    return headers
+
 def api_get(endpoint: str, default=None):
     try:
-        resp = requests.get(f"{BACKEND_URL}{endpoint}", timeout=4.0)
+        resp = requests.get(f"{BACKEND_URL}{endpoint}", headers=get_auth_headers(), timeout=4.0)
         if resp.status_code == 200:
             return resp.json()
     except Exception:
@@ -232,21 +243,21 @@ def api_get(endpoint: str, default=None):
 
 def api_post(endpoint: str, payload: dict, timeout: float = 60.0):
     try:
-        resp = requests.post(f"{BACKEND_URL}{endpoint}", json=payload, timeout=timeout)
+        resp = requests.post(f"{BACKEND_URL}{endpoint}", json=payload, headers=get_auth_headers(), timeout=timeout)
         return resp.status_code, resp.json()
     except Exception as e:
         return 500, {"error": str(e)}
 
 def api_patch(endpoint: str, payload: dict, timeout: float = 10.0):
     try:
-        resp = requests.patch(f"{BACKEND_URL}{endpoint}", json=payload, timeout=timeout)
+        resp = requests.patch(f"{BACKEND_URL}{endpoint}", json=payload, headers=get_auth_headers(), timeout=timeout)
         return resp.status_code, resp.json()
     except Exception as e:
         return 500, {"error": str(e)}
 
 def api_delete(endpoint: str, timeout: float = 10.0):
     try:
-        resp = requests.delete(f"{BACKEND_URL}{endpoint}", timeout=timeout)
+        resp = requests.delete(f"{BACKEND_URL}{endpoint}", headers=get_auth_headers(), timeout=timeout)
         return resp.status_code, resp.json()
     except Exception as e:
         return 500, {"error": str(e)}
@@ -254,7 +265,7 @@ def api_delete(endpoint: str, timeout: float = 10.0):
 def api_voice_stop():
     """Cancels active speech output and stops macOS say processes immediately."""
     try:
-        requests.post(f"{BACKEND_URL}/api/voice/stop", timeout=2.0)
+        requests.post(f"{BACKEND_URL}/api/voice/stop", headers=get_auth_headers(), timeout=2.0)
     except Exception:
         pass
 
@@ -269,7 +280,7 @@ def api_transcribe(
     try:
         files = {"file": (filename, audio_bytes, mime_type)}
         data = {"language": language, "privacy_mode": privacy_mode}
-        resp = requests.post(f"{BACKEND_URL}/api/voice/transcribe", files=files, data=data, timeout=35.0)
+        resp = requests.post(f"{BACKEND_URL}/api/voice/transcribe", files=files, data=data, headers=get_auth_headers(), timeout=35.0)
         if resp.status_code == 200:
             return resp.json()
         err_msg = "Transcription error."
@@ -291,7 +302,7 @@ def api_synthesize(text: str, voice_id: Optional[str] = None, language: str = "e
             "summarize_for_speech": True,
             "request_id": request_id,
         }
-        resp = requests.post(f"{BACKEND_URL}/api/voice/synthesize", json=payload, timeout=25.0)
+        resp = requests.post(f"{BACKEND_URL}/api/voice/synthesize", json=payload, headers=get_auth_headers(), timeout=25.0)
         if resp.status_code == 200:
             return resp.content
     except Exception as e:
@@ -1137,7 +1148,7 @@ elif st.session_state.active_section == "Knowledge Base":
                             "privacy_level": st.session_state.privacy_mode,
                         }
                         try:
-                            r = requests.post(f"{BACKEND_URL}/api/rag/upload", files=files_payload, data=data_payload, timeout=60.0)
+                            r = requests.post(f"{BACKEND_URL}/api/rag/upload", files=files_payload, data=data_payload, headers=get_auth_headers(), timeout=60.0)
                             if r.status_code == 200:
                                 res_json = r.json()
                                 st.success(f"Successfully indexed '{uploaded_file.name}' into {res_json.get('chunk_count', 0)} chunks.")
@@ -1308,7 +1319,7 @@ elif st.session_state.active_section == "Memory & Preferences":
                     if submitted_attr and attr_val.strip():
                         if attr_field == "preferred_name":
                             api_post("/api/user-profile/name", {"name": attr_val.strip()})
-                        requests.post(f"{BACKEND_URL}/api/memory", json={"key": attr_field, "value": attr_val.strip()})
+                        api_post("/api/memory", {"key": attr_field, "value": attr_val.strip()})
                         st.success(f"Updated {attr_field.replace('_', ' ').title()}.")
                         st.rerun()
 
@@ -1337,10 +1348,10 @@ elif st.session_state.active_section == "Memory & Preferences":
                     with col_pf2:
                         if not p.get("user_approved"):
                             if st.button("Confirm", key=f"appr_btn_{p['id']}", width="stretch"):
-                                requests.post(f"{BACKEND_URL}/api/preferences/{p['id']}/approve")
+                                api_post(f"/api/preferences/{p['id']}/approve", {})
                                 st.rerun()
                         if st.button("Remove", key=f"del_pref_btn_{p['id']}", width="stretch"):
-                            requests.delete(f"{BACKEND_URL}/api/memory/preferences/{p['id']}")
+                            api_delete(f"/api/memory/preferences/{p['id']}")
                             st.rerun()
         else:
             st.info("No behavioral preferences recorded yet. They will emerge naturally through conversation.")
@@ -1362,7 +1373,7 @@ elif st.session_state.active_section == "Memory & Preferences":
                         st.caption(f"Recorded: {ep['created_at'][:19]}")
                     with col_ep2:
                         if st.button("Delete", key=f"del_ep_btn_{ep['id']}", width="stretch"):
-                            requests.delete(f"{BACKEND_URL}/api/memory/episodic/{ep['id']}")
+                            api_delete(f"/api/memory/episodic/{ep['id']}")
                             st.rerun()
         else:
             st.info("No episodic memories stored yet.")
@@ -1378,7 +1389,7 @@ elif st.session_state.active_section == "Memory & Preferences":
                     st.markdown(f"**{proc['workflow_name']}**")
                     st.markdown(proc["steps"])
                     if st.button("Delete Workflow", key=f"del_proc_{proc['id']}"):
-                        requests.delete(f"{BACKEND_URL}/api/memory/procedural/{proc['id']}")
+                        api_delete(f"/api/memory/procedural/{proc['id']}")
                         st.rerun()
         else:
             st.info("No procedural workflows indexed yet.")

@@ -2,11 +2,13 @@
 
 import os
 import uuid
+import secrets
 import logging
 import urllib.parse
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Union
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -27,7 +29,8 @@ from src.rag.store import get_rag_store
 from src.security.constitution import PRINCIPLES, CONSTITUTION_VERSION
 from src.evaluation.feedback import FeedbackService
 from src.evaluation.eval_runner import run_benchmark_evaluation
-from src.config import AIRA_STORAGE_DIR, CORS_ORIGINS
+import src.config as app_config
+from src.config import AIRA_STORAGE_DIR, CORS_ORIGINS, AIRA_API_TOKEN
 from src.voice import get_voice_service, clean_text_for_speech
 from src.voice.providers import get_available_macos_voices
 from src.voice.live_provider import GeminiLiveVoiceProvider
@@ -45,6 +48,55 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def authenticate_api_requests(request: Request, call_next):
+    """Enforces Bearer token authentication across all /api/ endpoints.
+
+    Fails closed if the server token is unconfigured.
+    Permits CORS preflight (OPTIONS) requests without requiring credentials.
+    """
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    path = request.url.path
+    if path.startswith("/api/") or path == "/api":
+        server_token = os.getenv("AIRA_API_TOKEN") or getattr(app_config, "AIRA_API_TOKEN", "") or AIRA_API_TOKEN
+
+        if not server_token:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized: API token is not configured on server"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized: Missing Authorization header"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        parts = auth_header.split(" ", 1)
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized: Invalid Authorization header format. Expected 'Bearer <token>'"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        token = parts[1].strip()
+        if not secrets.compare_digest(token, server_token):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized: Invalid API token"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    return await call_next(request)
+
 
 repo = get_shared_repository()
 policy_engine = get_shared_policy_engine()

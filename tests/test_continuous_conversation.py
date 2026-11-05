@@ -468,11 +468,13 @@ def test_full_10_step_conversational_sequence():
 
 @pytest.mark.asyncio
 async def test_fastapi_interrupt_endpoint():
+    import os
     from httpx import AsyncClient, ASGITransport
     from src.main import app
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    token = os.getenv("AIRA_API_TOKEN", "test-token-aira-secret-key-ci-42")
+    async with AsyncClient(transport=transport, base_url="http://test", headers={"Authorization": f"Bearer {token}"}) as client:
         response = await client.post("/api/voice/interrupt", json={"session_id": "test_sess_123", "reason": "user_touch"})
         assert response.status_code == 200
         data = response.json()

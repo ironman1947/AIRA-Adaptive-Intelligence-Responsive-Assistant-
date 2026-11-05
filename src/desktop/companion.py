@@ -44,7 +44,8 @@ from src.voice.service import get_voice_service
 from src.voice.live_provider import GeminiLiveVoiceProvider
 from src.desktop.service import get_desktop_service
 
-BACKEND_API_URL = "http://localhost:8080"
+BACKEND_API_URL = os.getenv("AIRA_BACKEND_URL", "http://localhost:8080")
+AIRA_API_TOKEN = os.getenv("AIRA_API_TOKEN", "")
 
 
 def is_farewell_phrase(text: str) -> bool:
@@ -162,8 +163,9 @@ class AiraDesktopCompanion:
 
     is_farewell_phrase = staticmethod(is_farewell_phrase)
 
-    def __init__(self, backend_url: str = BACKEND_API_URL, mode: Optional[str] = None):
+    def __init__(self, backend_url: str = BACKEND_API_URL, mode: Optional[str] = None, api_token: Optional[str] = None):
         self.backend_url = backend_url
+        self.api_token = api_token or os.getenv("AIRA_API_TOKEN", "") or AIRA_API_TOKEN
 
         # Mode resolution: "live" (Gemini Live API) or "chained" (Faster-Whisper -> Orchestrator -> ElevenLabs)
         env_mode = os.getenv("AIRA_VOICE_MODE", "").strip().lower()
@@ -223,6 +225,16 @@ class AiraDesktopCompanion:
     @property
     def turn_number(self) -> int:
         return self.sm.turn_number
+
+    def _get_auth_headers(self, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """Returns Authorization header with Bearer token for backend calls."""
+        headers = {}
+        token = os.getenv("AIRA_API_TOKEN") or getattr(self, "api_token", "") or AIRA_API_TOKEN
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if extra_headers:
+            headers.update(extra_headers)
+        return headers
 
     def _run_async_worker(self):
         """Dedicated background event loop thread for async speech and audio operations."""
@@ -546,6 +558,7 @@ class AiraDesktopCompanion:
                     "session_id": self.sm.session_id,
                     "privacy_mode": "standard",
                 },
+                headers=self._get_auth_headers(),
                 timeout=35.0,
             )
             # T7: backend response received

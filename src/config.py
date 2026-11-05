@@ -53,8 +53,9 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
 ELEVENLABS_TTS_MODEL = os.getenv("ELEVENLABS_TTS_MODEL", "eleven_v4_turbo")
 
 # ------------------------------------------------------------------------------
-# API Security
+# API Security & Authentication
 # ------------------------------------------------------------------------------
+AIRA_API_TOKEN = os.getenv("AIRA_API_TOKEN", "")
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
