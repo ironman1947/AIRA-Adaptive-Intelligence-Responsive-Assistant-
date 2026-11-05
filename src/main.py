@@ -1,9 +1,11 @@
 """FastAPI Backend for Project AIRA (Adaptive Intelligence & Responsive Assistant)."""
 
 import os
+import uuid
 import logging
+import urllib.parse
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -25,7 +27,7 @@ from src.rag.store import get_rag_store
 from src.security.constitution import PRINCIPLES, CONSTITUTION_VERSION
 from src.evaluation.feedback import FeedbackService
 from src.evaluation.eval_runner import run_benchmark_evaluation
-from src.config import AIRA_STORAGE_DIR
+from src.config import AIRA_STORAGE_DIR, CORS_ORIGINS
 from src.voice import get_voice_service, clean_text_for_speech
 from src.voice.providers import get_available_macos_voices
 from src.voice.live_provider import GeminiLiveVoiceProvider
@@ -38,7 +40,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -380,27 +382,58 @@ async def list_rag_documents(project_id: Optional[str] = None):
 
 @app.post("/api/rag/upload")
 async def upload_document(
-    file: UploadFile = File(...),
+    file: Union[UploadFile, str] = File(...),
     project_id: Optional[str] = Form(None),
     privacy_level: str = Form("standard"),
 ):
     upload_dir = Path(AIRA_STORAGE_DIR) / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
-    save_path = upload_dir / file.filename
 
+    if isinstance(file, str) or not hasattr(file, "filename") or not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid filename"
+        )
+
+    # Normalize both Unix and Windows path separators and decode percent-encoding.
+    original_name = urllib.parse.unquote(file.filename).replace("\\", "/")
+    safe_name = Path(original_name).name
+    # Reject empty names, hidden files, and invalid filenames.
+    if (
+        not safe_name
+        or safe_name.startswith(".")
+        or safe_name in {".", ".."}
+        or any(ord(char) < 32 for char in safe_name)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid filename"
+        )
+    # Unique name prevents overwriting existing uploaded files.
+    save_path = upload_dir / f"{uuid.uuid4().hex}_{safe_name}"
     content = await file.read()
-    with open(save_path, "wb") as f:
-        f.write(content)
-
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail="File size exceeds maximum allowed limit (50 MB)"
+        )
     try:
-        res = rag_store.index_document(
+        with save_path.open("xb") as f:
+            f.write(content)
+        result = rag_store.index_document(
             file_path=str(save_path),
             project_id=project_id,
-            privacy_level=privacy_level
+            privacy_level=privacy_level,
         )
-        return res
+        return result
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to index document: {str(e)}")
+        logger.exception("RAG document upload/indexing failed")
+        if save_path.exists():
+            save_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to process uploaded document"
+        )
 
 @app.post("/api/rag/search")
 async def search_rag(req: RAGSearchRequest):

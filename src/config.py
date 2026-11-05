@@ -53,8 +53,20 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
 ELEVENLABS_TTS_MODEL = os.getenv("ELEVENLABS_TTS_MODEL", "eleven_v4_turbo")
 
 # ------------------------------------------------------------------------------
+# API Security
+# ------------------------------------------------------------------------------
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:8501,http://127.0.0.1:8501"
+    ).split(",")
+    if origin.strip()
+]
+
+# ------------------------------------------------------------------------------
 # Server Settings
 # ------------------------------------------------------------------------------
-HOST = os.getenv("HOST", "0.0.0.0")
+HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8080"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
