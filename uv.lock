@@ -36,6 +36,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
     { name = "scikit-learn" },
+    { name = "streamlit" },
     { name = "uvicorn" },
 ]
 
@@ -80,6 +81,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.0" },
     { name = "scikit-learn", specifier = ">=1.4.0" },
     { name = "sounddevice", marker = "extra == 'voice'", specifier = ">=0.4.6" },
+    { name = "streamlit", specifier = ">=1.40" },
     { name = "streamlit", marker = "extra == 'ui'", specifier = ">=1.40" },
     { name = "uvicorn", specifier = ">=0.54.0" },
     { name = "websockets", marker = "extra == 'voice'", specifier = ">=12" },
