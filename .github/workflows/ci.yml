@@ -29,6 +29,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,ui]"
 
+      - name: Verify installed dependencies
+        run: |
+          python -m pip show streamlit
+          python -c "import streamlit; print('Streamlit:', streamlit.__version__)"
+          python -m pip check
+
       - name: Run test suite
         run: |
           pytest -q
