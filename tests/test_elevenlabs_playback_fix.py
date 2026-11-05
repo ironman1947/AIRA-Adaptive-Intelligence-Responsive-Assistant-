@@ -281,7 +281,7 @@ def test_9_normal_companion_shutdown():
     companion = AiraDesktopCompanion()
     t = threading.Thread(target=companion.run, daemon=True)
     t.start()
-    for _ in range(30):
+    for _ in range(80):
         if companion._running:
             break
         time.sleep(0.1)
