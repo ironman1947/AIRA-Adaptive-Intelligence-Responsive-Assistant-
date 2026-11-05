@@ -298,66 +298,22 @@ def api_synthesize(text: str, voice_id: Optional[str] = None, language: str = "e
         print(f"TTS synthesis API error: {e}")
     return None
 
-def group_conversations_by_date(conversations: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    """Groups conversation dictionaries into Today, Yesterday, Previous 7 Days, and Older."""
-    now = datetime.now()
-    today_date = now.date()
-    yesterday_date = today_date - timedelta(days=1)
-    seven_days_ago = today_date - timedelta(days=7)
-
-    groups = {
-        "Today": [],
-        "Yesterday": [],
-        "Previous 7 Days": [],
-        "Older": [],
-    }
-
-    for conv in conversations:
-        up_str = str(conv.get("updated_at") or conv.get("created_at") or "")
-        try:
-            clean_ts = up_str.replace("Z", "+00:00")
-            conv_date = datetime.fromisoformat(clean_ts).date()
-        except Exception:
-            conv_date = today_date
-
-        if conv_date == today_date:
-            groups["Today"].append(conv)
-        elif conv_date == yesterday_date:
-            groups["Yesterday"].append(conv)
-        elif conv_date >= seven_days_ago:
-            groups["Previous 7 Days"].append(conv)
-        else:
-            groups["Older"].append(conv)
-
-    return groups
+from src.ui.formatting import (
+    resolve_engine_and_model_badge as _format_badge,
+    group_conversations_by_date,
+)
 
 def resolve_engine_and_model_badge(msg: Dict[str, Any]) -> str:
     """Safely extracts engine and model display labels from message metadata.
 
     Handles missing keys, None values, and legacy formats gracefully without raising AttributeError.
     """
-    raw_model = str(msg.get("model") or "").strip()
-    raw_engine = str(msg.get("engine") or "").strip().lower()
-    model_lower = raw_model.lower()
-
-    if raw_engine == "local" or "gemma" in model_lower:
-        engine_label = "Local Gemma 2B"
-    elif raw_engine == "cloud" or "nemotron" in model_lower:
-        engine_label = "Cloud Nemotron"
-    elif raw_engine:
-        engine_label = raw_engine.title()
-    elif model_lower:
-        engine_label = raw_model
-    else:
-        engine_label = "AIRA Assistant"
-
-    badge_info = engine_label
-    if raw_model and st.session_state.get("show_debug_traces", False):
-        badge_info += f" • `{raw_model}`"
-    if msg.get("tools_triggered"):
-        badge_info += " • Tool Assisted"
-
-    return badge_info
+    show_debug = False
+    try:
+        show_debug = bool(st.session_state.get("show_debug_traces", False))
+    except Exception:
+        show_debug = False
+    return _format_badge(msg, show_debug_traces=show_debug)
 
 
 # ------------------------------------------------------------------------------

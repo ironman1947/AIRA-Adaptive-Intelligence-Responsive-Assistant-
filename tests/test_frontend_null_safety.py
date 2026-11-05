@@ -1,30 +1,32 @@
-"""Tests for frontend message rendering null-safety across all metadata permutations."""
+"""Tests for UI message rendering null-safety across all metadata permutations."""
 
 import pytest
-from frontend import resolve_engine_and_model_badge
+from src.ui.formatting import resolve_engine_and_model_badge
+from frontend import resolve_engine_and_model_badge as frontend_resolve_badge
+
 
 def test_message_rendering_model_is_none():
     msg = {"role": "assistant", "content": "Test response", "model": None, "engine": None}
-    badge = resolve_engine_and_model_badge(msg)
-    assert badge == "AIRA Assistant"
+    assert resolve_engine_and_model_badge(msg) == "AIRA Assistant"
+    assert frontend_resolve_badge(msg) == "AIRA Assistant"
 
 
 def test_message_rendering_model_key_missing():
     msg = {"role": "assistant", "content": "Legacy response without model key"}
-    badge = resolve_engine_and_model_badge(msg)
-    assert badge == "AIRA Assistant"
+    assert resolve_engine_and_model_badge(msg) == "AIRA Assistant"
+    assert frontend_resolve_badge(msg) == "AIRA Assistant"
 
 
 def test_message_rendering_model_is_gemma_local():
     # Test case 1: model is gemma:2b, engine is None
     msg1 = {"role": "assistant", "content": "Local response", "model": "gemma:2b", "engine": None}
-    badge1 = resolve_engine_and_model_badge(msg1)
-    assert badge1 == "Local Gemma 2B"
+    assert resolve_engine_and_model_badge(msg1) == "Local Gemma 2B"
+    assert frontend_resolve_badge(msg1) == "Local Gemma 2B"
 
     # Test case 2: engine is local, model is None
     msg2 = {"role": "assistant", "content": "Local response", "model": None, "engine": "local"}
-    badge2 = resolve_engine_and_model_badge(msg2)
-    assert badge2 == "Local Gemma 2B"
+    assert resolve_engine_and_model_badge(msg2) == "Local Gemma 2B"
+    assert frontend_resolve_badge(msg2) == "Local Gemma 2B"
 
 
 def test_message_rendering_model_is_cloud():
@@ -35,19 +37,19 @@ def test_message_rendering_model_is_cloud():
         "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "engine": None,
     }
-    badge1 = resolve_engine_and_model_badge(msg1)
-    assert badge1 == "Cloud Nemotron"
+    assert resolve_engine_and_model_badge(msg1) == "Cloud Nemotron"
+    assert frontend_resolve_badge(msg1) == "Cloud Nemotron"
 
     # Test case 2: engine is cloud, model is None
     msg2 = {"role": "assistant", "content": "Cloud response", "model": None, "engine": "cloud"}
-    badge2 = resolve_engine_and_model_badge(msg2)
-    assert badge2 == "Cloud Nemotron"
+    assert resolve_engine_and_model_badge(msg2) == "Cloud Nemotron"
+    assert frontend_resolve_badge(msg2) == "Cloud Nemotron"
 
 
 def test_message_rendering_engine_is_none():
     msg = {"role": "assistant", "content": "Response", "engine": None, "model": None}
-    badge = resolve_engine_and_model_badge(msg)
-    assert badge == "AIRA Assistant"
+    assert resolve_engine_and_model_badge(msg) == "AIRA Assistant"
+    assert frontend_resolve_badge(msg) == "AIRA Assistant"
 
 
 def test_message_rendering_with_tool_assisted():
@@ -61,3 +63,13 @@ def test_message_rendering_with_tool_assisted():
     badge = resolve_engine_and_model_badge(msg)
     assert "Tool Assisted" in badge
     assert "Local Gemma 2B" in badge
+
+    fe_badge = frontend_resolve_badge(msg)
+    assert "Tool Assisted" in fe_badge
+    assert "Local Gemma 2B" in fe_badge
+
+
+def test_message_rendering_debug_traces():
+    msg = {"role": "assistant", "content": "Resp", "model": "gemma:2b", "engine": "local"}
+    badge_with_debug = resolve_engine_and_model_badge(msg, show_debug_traces=True)
+    assert "`gemma:2b`" in badge_with_debug
