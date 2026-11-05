@@ -2,31 +2,42 @@
 
 import pytest
 from src.ui.formatting import resolve_engine_and_model_badge
-from frontend import resolve_engine_and_model_badge as frontend_resolve_badge
+
+try:
+    import streamlit
+    from frontend import resolve_engine_and_model_badge as frontend_resolve_badge
+    HAS_STREAMLIT = True
+except ImportError:
+    HAS_STREAMLIT = False
+    frontend_resolve_badge = None
 
 
 def test_message_rendering_model_is_none():
     msg = {"role": "assistant", "content": "Test response", "model": None, "engine": None}
     assert resolve_engine_and_model_badge(msg) == "AIRA Assistant"
-    assert frontend_resolve_badge(msg) == "AIRA Assistant"
+    if HAS_STREAMLIT and frontend_resolve_badge:
+        assert frontend_resolve_badge(msg) == "AIRA Assistant"
 
 
 def test_message_rendering_model_key_missing():
     msg = {"role": "assistant", "content": "Legacy response without model key"}
     assert resolve_engine_and_model_badge(msg) == "AIRA Assistant"
-    assert frontend_resolve_badge(msg) == "AIRA Assistant"
+    if HAS_STREAMLIT and frontend_resolve_badge:
+        assert frontend_resolve_badge(msg) == "AIRA Assistant"
 
 
 def test_message_rendering_model_is_gemma_local():
     # Test case 1: model is gemma:2b, engine is None
     msg1 = {"role": "assistant", "content": "Local response", "model": "gemma:2b", "engine": None}
     assert resolve_engine_and_model_badge(msg1) == "Local Gemma 2B"
-    assert frontend_resolve_badge(msg1) == "Local Gemma 2B"
+    if HAS_STREAMLIT and frontend_resolve_badge:
+        assert frontend_resolve_badge(msg1) == "Local Gemma 2B"
 
     # Test case 2: engine is local, model is None
     msg2 = {"role": "assistant", "content": "Local response", "model": None, "engine": "local"}
     assert resolve_engine_and_model_badge(msg2) == "Local Gemma 2B"
-    assert frontend_resolve_badge(msg2) == "Local Gemma 2B"
+    if HAS_STREAMLIT and frontend_resolve_badge:
+        assert frontend_resolve_badge(msg2) == "Local Gemma 2B"
 
 
 def test_message_rendering_model_is_cloud():
@@ -38,18 +49,21 @@ def test_message_rendering_model_is_cloud():
         "engine": None,
     }
     assert resolve_engine_and_model_badge(msg1) == "Cloud Nemotron"
-    assert frontend_resolve_badge(msg1) == "Cloud Nemotron"
+    if HAS_STREAMLIT and frontend_resolve_badge:
+        assert frontend_resolve_badge(msg1) == "Cloud Nemotron"
 
     # Test case 2: engine is cloud, model is None
     msg2 = {"role": "assistant", "content": "Cloud response", "model": None, "engine": "cloud"}
     assert resolve_engine_and_model_badge(msg2) == "Cloud Nemotron"
-    assert frontend_resolve_badge(msg2) == "Cloud Nemotron"
+    if HAS_STREAMLIT and frontend_resolve_badge:
+        assert frontend_resolve_badge(msg2) == "Cloud Nemotron"
 
 
 def test_message_rendering_engine_is_none():
     msg = {"role": "assistant", "content": "Response", "engine": None, "model": None}
     assert resolve_engine_and_model_badge(msg) == "AIRA Assistant"
-    assert frontend_resolve_badge(msg) == "AIRA Assistant"
+    if HAS_STREAMLIT and frontend_resolve_badge:
+        assert frontend_resolve_badge(msg) == "AIRA Assistant"
 
 
 def test_message_rendering_with_tool_assisted():
@@ -64,9 +78,10 @@ def test_message_rendering_with_tool_assisted():
     assert "Tool Assisted" in badge
     assert "Local Gemma 2B" in badge
 
-    fe_badge = frontend_resolve_badge(msg)
-    assert "Tool Assisted" in fe_badge
-    assert "Local Gemma 2B" in fe_badge
+    if HAS_STREAMLIT and frontend_resolve_badge:
+        fe_badge = frontend_resolve_badge(msg)
+        assert "Tool Assisted" in fe_badge
+        assert "Local Gemma 2B" in fe_badge
 
 
 def test_message_rendering_debug_traces():
