@@ -9,11 +9,58 @@ import time
 import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
+from pathlib import Path
+from dotenv import load_dotenv
 import requests
 import streamlit as st
 
-BACKEND_URL = os.getenv("AIRA_BACKEND_URL", "http://localhost:8080")
-AIRA_API_TOKEN = os.getenv("AIRA_API_TOKEN", "")
+# ------------------------------------------------------------------------------
+# Environment & Configuration Loading
+# ------------------------------------------------------------------------------
+# Explicitly load .env from project root
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
+
+def get_backend_url() -> str:
+    """Resolves backend API URL from environment, Streamlit secrets, or defaults."""
+    url = os.getenv("AIRA_BACKEND_URL", "").strip()
+    if url:
+        return url.rstrip("/")
+    try:
+        if hasattr(st, "secrets") and "AIRA_BACKEND_URL" in st.secrets:
+            sec_url = str(st.secrets["AIRA_BACKEND_URL"]).strip()
+            if sec_url:
+                return sec_url.rstrip("/")
+    except Exception:
+        pass
+    host = os.getenv("HOST", "127.0.0.1").strip()
+    if host in ("0.0.0.0", "::"):
+        host = "127.0.0.1"
+    port = os.getenv("PORT", "8080").strip()
+    return f"http://{host}:{port}"
+
+def get_configured_token() -> str:
+    """Safely retrieves the configured AIRA_API_TOKEN with multi-source fallback."""
+    token = os.getenv("AIRA_API_TOKEN", "").strip()
+    if token:
+        return token
+    try:
+        if hasattr(st, "secrets") and "AIRA_API_TOKEN" in st.secrets:
+            sec_token = str(st.secrets["AIRA_API_TOKEN"]).strip()
+            if sec_token:
+                return sec_token
+    except Exception:
+        pass
+    try:
+        from src.config import AIRA_API_TOKEN as CONFIG_TOKEN
+        if CONFIG_TOKEN and str(CONFIG_TOKEN).strip():
+            return str(CONFIG_TOKEN).strip()
+    except Exception:
+        pass
+    return ""
+
+BACKEND_URL = get_backend_url()
+AIRA_API_TOKEN = get_configured_token()
 
 # ------------------------------------------------------------------------------
 # Page Configuration
@@ -225,40 +272,86 @@ st.html(CUSTOM_CSS)
 def get_auth_headers(extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Generates server-side Authorization headers for backend requests."""
     headers = {}
-    token = os.getenv("AIRA_API_TOKEN") or AIRA_API_TOKEN
+    token = get_configured_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if extra_headers:
         headers.update(extra_headers)
     return headers
 
-def api_get(endpoint: str, default=None):
+def api_get(endpoint: str, default=None, timeout: float = 10.0):
+    """Executes an authenticated GET request with null-safe error recovery."""
     try:
-        resp = requests.get(f"{BACKEND_URL}{endpoint}", headers=get_auth_headers(), timeout=4.0)
+        resp = requests.get(f"{BACKEND_URL}{endpoint}", headers=get_auth_headers(), timeout=timeout)
         if resp.status_code == 200:
+            if "api_auth_error" in st.session_state:
+                st.session_state.pop("api_auth_error", None)
             return resp.json()
-    except Exception:
+        elif resp.status_code == 401:
+            st.session_state["api_auth_error"] = (
+                "Backend authentication failed (401 Unauthorized). "
+                "Verify that AIRA_API_TOKEN is properly configured in your .env file."
+            )
+        elif resp.status_code == 404:
+            return default
+    except Exception as e:
         pass
     return default
 
 def api_post(endpoint: str, payload: dict, timeout: float = 60.0):
+    """Executes an authenticated POST request with error and status tracking."""
     try:
         resp = requests.post(f"{BACKEND_URL}{endpoint}", json=payload, headers=get_auth_headers(), timeout=timeout)
-        return resp.status_code, resp.json()
+        if resp.status_code == 401:
+            st.session_state["api_auth_error"] = (
+                "Backend authentication failed (401 Unauthorized). "
+                "Verify that AIRA_API_TOKEN is properly configured in your .env file."
+            )
+        elif resp.status_code == 200 and "api_auth_error" in st.session_state:
+            st.session_state.pop("api_auth_error", None)
+        try:
+            body = resp.json()
+        except Exception:
+            body = {"detail": resp.text}
+        return resp.status_code, body
     except Exception as e:
         return 500, {"error": str(e)}
 
 def api_patch(endpoint: str, payload: dict, timeout: float = 10.0):
+    """Executes an authenticated PATCH request with error and status tracking."""
     try:
         resp = requests.patch(f"{BACKEND_URL}{endpoint}", json=payload, headers=get_auth_headers(), timeout=timeout)
-        return resp.status_code, resp.json()
+        if resp.status_code == 401:
+            st.session_state["api_auth_error"] = (
+                "Backend authentication failed (401 Unauthorized). "
+                "Verify that AIRA_API_TOKEN is properly configured in your .env file."
+            )
+        elif resp.status_code == 200 and "api_auth_error" in st.session_state:
+            st.session_state.pop("api_auth_error", None)
+        try:
+            body = resp.json()
+        except Exception:
+            body = {"detail": resp.text}
+        return resp.status_code, body
     except Exception as e:
         return 500, {"error": str(e)}
 
 def api_delete(endpoint: str, timeout: float = 10.0):
+    """Executes an authenticated DELETE request with error and status tracking."""
     try:
         resp = requests.delete(f"{BACKEND_URL}{endpoint}", headers=get_auth_headers(), timeout=timeout)
-        return resp.status_code, resp.json()
+        if resp.status_code == 401:
+            st.session_state["api_auth_error"] = (
+                "Backend authentication failed (401 Unauthorized). "
+                "Verify that AIRA_API_TOKEN is properly configured in your .env file."
+            )
+        elif resp.status_code == 200 and "api_auth_error" in st.session_state:
+            st.session_state.pop("api_auth_error", None)
+        try:
+            body = resp.json()
+        except Exception:
+            body = {"detail": resp.text}
+        return resp.status_code, body
     except Exception as e:
         return 500, {"error": str(e)}
 
@@ -337,12 +430,12 @@ if "conversation_id" not in st.session_state:
         st.session_state.conversation_id = url_cid
     else:
         recent = api_get("/api/conversations?limit=1", [])
-        if recent and len(recent) > 0:
+        if recent and isinstance(recent, list) and len(recent) > 0 and recent[0].get("id"):
             st.session_state.conversation_id = recent[0]["id"]
             st.query_params["cid"] = st.session_state.conversation_id
         else:
             code, created = api_post("/api/conversations", {"title": "New Conversation"})
-            new_id = created.get("id", f"conv_{int(time.time())}")
+            new_id = (created.get("id") if (code == 200 and isinstance(created, dict)) else None) or f"conv_{int(time.time())}"
             st.session_state.conversation_id = new_id
             st.query_params["cid"] = new_id
 elif url_cid and url_cid != st.session_state.conversation_id:
@@ -354,13 +447,30 @@ st.query_params["cid"] = st.session_state.conversation_id
 # Load Messages from Backend Database on Conversation Change
 if st.session_state.get("last_loaded_conv_id") != st.session_state.conversation_id:
     conv_data = api_get(f"/api/conversations/{st.session_state.conversation_id}")
-    if conv_data and "messages" in conv_data:
+    if conv_data and isinstance(conv_data, dict) and "messages" in conv_data:
         st.session_state.messages = conv_data["messages"]
         st.session_state.current_conv_title = conv_data.get("title", "New Conversation")
+        st.session_state.last_loaded_conv_id = st.session_state.conversation_id
     else:
-        st.session_state.messages = []
-        st.session_state.current_conv_title = "New Conversation"
-    st.session_state.last_loaded_conv_id = st.session_state.conversation_id
+        # If requested conversation was not found on backend (e.g. invalid ?cid=), fallback gracefully to latest
+        recent = api_get("/api/conversations?limit=1", [])
+        if recent and isinstance(recent, list) and len(recent) > 0 and recent[0].get("id") and recent[0]["id"] != st.session_state.conversation_id:
+            fallback_cid = recent[0]["id"]
+            fallback_data = api_get(f"/api/conversations/{fallback_cid}")
+            if fallback_data and isinstance(fallback_data, dict) and "messages" in fallback_data:
+                st.session_state.conversation_id = fallback_cid
+                st.query_params["cid"] = fallback_cid
+                st.session_state.messages = fallback_data["messages"]
+                st.session_state.current_conv_title = fallback_data.get("title", "New Conversation")
+                st.session_state.last_loaded_conv_id = fallback_cid
+            else:
+                st.session_state.messages = []
+                st.session_state.current_conv_title = "New Conversation"
+                st.session_state.last_loaded_conv_id = fallback_cid
+        else:
+            st.session_state.messages = []
+            st.session_state.current_conv_title = "New Conversation"
+            st.session_state.last_loaded_conv_id = st.session_state.conversation_id
 
 if "active_section" not in st.session_state:
     st.session_state.active_section = "Conversation"
@@ -423,6 +533,12 @@ user_display_name = user_info.get("user_display_name")
 # SIDEBAR: Branding, New Chat, Search, History, Workspaces, and Status
 # ------------------------------------------------------------------------------
 with st.sidebar:
+    # 0. Authentication Status Check
+    if st.session_state.get("api_auth_error"):
+        st.error(st.session_state["api_auth_error"], icon=":material/security:")
+    elif not get_configured_token():
+        st.warning("⚠️ AIRA_API_TOKEN is not configured in .env.", icon=":material/lock:")
+
     # 1. AIRA Logo and Branding
     st.html("""
     <div class="aira-sidebar-brand">
@@ -684,7 +800,7 @@ if st.session_state.active_section == "Conversation":
 
     # 3. Render Message History
     for idx, msg in enumerate(st.session_state.messages):
-        role = msg["role"]
+        role = msg.get("role", "assistant")
         is_assistant = (role == "assistant")
         avatar_val = ":material/auto_awesome:" if is_assistant else None
 
@@ -695,30 +811,34 @@ if st.session_state.active_section == "Conversation":
                 st.caption(f":grey[{badge_info}]")
 
             # Executed Tools Expander
-            if is_assistant and msg.get("executed_tools") and len(msg["executed_tools"]) > 0:
-                with st.expander(f":material/build: Executed {len(msg['executed_tools'])} Tool Action(s)", expanded=False):
-                    for t in msg["executed_tools"]:
-                        st.markdown(f"**Tool:** `{t['tool']}` &nbsp;|&nbsp; **Risk:** `{t.get('risk_level', 'low')}` &nbsp;|&nbsp; **Decision:** `{t.get('decision', 'allowed')}`")
+            executed_tools = msg.get("executed_tools") or msg.get("metadata", {}).get("executed_tools") or []
+            if is_assistant and executed_tools and len(executed_tools) > 0:
+                with st.expander(f":material/build: Executed {len(executed_tools)} Tool Action(s)", expanded=False):
+                    for t in executed_tools:
+                        st.markdown(f"**Tool:** `{t.get('tool', 'tool')}` &nbsp;|&nbsp; **Risk:** `{t.get('risk_level', 'low')}` &nbsp;|&nbsp; **Decision:** `{t.get('decision', 'allowed')}`")
                         if t.get("arguments"):
                             st.code(json.dumps(t["arguments"], indent=2), language="json")
 
             # Main Markdown Content (with syntax highlighting and copy support)
-            st.markdown(msg["content"])
+            st.markdown(msg.get("content") or "")
 
             # Grounded Sources & Citations
-            if msg.get("sources_used") and len(msg["sources_used"]) > 0:
-                with st.expander(f":material/dataset: Grounded Evidence ({len(msg['sources_used'])} sources)", expanded=False):
-                    for src in msg["sources_used"]:
+            sources_used = msg.get("sources_used") or msg.get("metadata", {}).get("sources_used") or []
+            if sources_used and len(sources_used) > 0:
+                with st.expander(f":material/dataset: Grounded Evidence ({len(sources_used)} sources)", expanded=False):
+                    for src in sources_used:
                         st.markdown(f"- {src}")
 
-            if msg.get("contradictions") and len(msg["contradictions"]) > 0:
-                for c in msg["contradictions"]:
+            contradictions = msg.get("contradictions") or msg.get("metadata", {}).get("contradictions") or []
+            if contradictions and len(contradictions) > 0:
+                for c in contradictions:
                     st.warning(f"Discrepancy noted across sources: {c}", icon=":material/warning:")
 
-            if msg.get("citations") and len(msg["citations"]) > 0:
+            citations = msg.get("citations") or msg.get("metadata", {}).get("citations") or []
+            if citations and len(citations) > 0:
                 with st.container():
                     st.markdown("##### :material/link: Grounded Sources & Citations")
-                    for cite in msg["citations"]:
+                    for cite in citations:
                         st.markdown(f"- {cite}")
 
             # Inline Action Plan Approval Card
@@ -943,6 +1063,12 @@ if st.session_state.active_section == "Conversation":
 
                 if status_code == 200:
                     st.session_state.last_error_prompt = None
+                    actual_cid = response.get("conversation_id") or response.get("session_id")
+                    if actual_cid and actual_cid != st.session_state.conversation_id:
+                        st.session_state.conversation_id = actual_cid
+                        st.session_state.last_loaded_conv_id = actual_cid
+                        st.query_params["cid"] = actual_cid
+
                     model = response.get("model_used") or "Local/Cloud"
                     complexity = response.get("complexity", "standard")
                     target_engine = response.get("target_engine", "local")
@@ -1008,8 +1134,14 @@ if st.session_state.active_section == "Conversation":
                 else:
                     status_box.update(label="Request failed", state="error")
                     err_msg = response.get("detail") or response.get("error") or "Internal communication error."
-                    st.error(f"AIRA Engine Error ({status_code}): {err_msg}")
+                    if status_code == 401:
+                        st.error(f"AIRA Authentication Error (401): {err_msg}. Please check that AIRA_API_TOKEN is properly configured in .env.")
+                    else:
+                        st.error(f"AIRA Engine Error ({status_code}): {err_msg}")
                     st.session_state.last_error_prompt = prompt_to_send
+                    # Remove unresponded user prompt from in-memory state so retry can re-add cleanly
+                    if st.session_state.messages and st.session_state.messages[-1].get("role") == "user":
+                        st.session_state.messages.pop()
 
 
 # ==============================================================================
