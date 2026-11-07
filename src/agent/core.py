@@ -43,23 +43,39 @@ from src.context.session_continuity import SessionContinuityEngine
 from src.security.audit import AuditService
 from src.security.policy import PolicyDecisionEngine
 from src.tools.registry import ToolRegistry
+from src.tools.executor import ControlledToolExecutor
+from src.tasks.repository import TaskRepository
 from src.rag.store import get_rag_store
 from src.knowledge.engine import UnifiedKnowledgeEngine, KnowledgeBundle
 
 # Shared singleton components
 _repo = MemoryRepository(get_db_manager())
+_task_repo = TaskRepository(get_db_manager())
 _user_profile_mgr = UserProfileManager(_repo)
 _project_mgr = ProjectContextManager(_repo)
 _session_mgr = SessionContinuityEngine(_repo)
 _audit_service = AuditService(_repo)
-_policy_engine = PolicyDecisionEngine(_audit_service)
+_policy_engine = PolicyDecisionEngine(_audit_service, task_repo=_task_repo)
 _tool_registry = ToolRegistry(workspace_root=str(BASE_DIR), memory_repo=_repo)
+_tool_executor = ControlledToolExecutor(
+    tool_registry=_tool_registry,
+    policy_engine=_policy_engine,
+    audit_service=_audit_service,
+    task_repo=_task_repo,
+    workspace_root=str(BASE_DIR),
+)
 _rag_store = get_rag_store()
 _knowledge_engine = UnifiedKnowledgeEngine(
     rag_store=_rag_store,
     memory_repo=_repo,
     project_mgr=_project_mgr,
 )
+
+def get_shared_tool_executor() -> ControlledToolExecutor:
+    return _tool_executor
+
+def get_shared_task_repository() -> TaskRepository:
+    return _task_repo
 
 def _save_turn(sess_id: str, prompt: str, result_text: str, engine: Optional[str] = None, model: Optional[str] = None):
     """Persists a user-assistant conversation turn in SQLite."""
@@ -737,16 +753,18 @@ async def run_agent_workflow(
             tool_def = _tool_registry.get_tool(func_name)
             action_type = tool_def.action_type if tool_def else "UNKNOWN"
 
-            # Evaluate with Policy Decision Layer
-            decision, risk, reason = _policy_engine.evaluate_action(
-                action_type=action_type,
+            # Execute through Central Controlled Tool Executor
+            exec_res = _tool_executor.execute_tool(
                 tool_name=func_name,
-                parameters=raw_args,
+                arguments=raw_args,
                 request_id=request_id,
                 privacy_mode=active_privacy,
-                authorized_root=str(BASE_DIR),
                 pre_approved=pre_approved_action,
             )
+
+            decision = exec_res.get("policy_decision", "DENY")
+            risk = exec_res.get("risk_level", "LOW")
+            reason = exec_res.get("reason", "")
 
             executed_tools.append({
                 "tool": func_name,
@@ -756,31 +774,14 @@ async def run_agent_workflow(
                 "arguments": raw_args,
             })
 
-            if decision == "DENY":
-                tool_output = json.dumps({
-                    "status": "denied",
-                    "policy_decision": "DENY",
-                    "reason": reason
-                })
-            elif decision == "REQUIRE_APPROVAL":
+            if exec_res.get("status") == "denied":
+                tool_output = json.dumps(exec_res)
+            elif exec_res.get("status") == "pending_human_approval":
                 approval_needed = True
-                approval_id = f"appr_{uuid.uuid4().hex[:8]}"
-                pending_approval_details = _policy_engine.register_approval_request(
-                    approval_id=approval_id,
-                    tool_name=func_name,
-                    parameters=raw_args,
-                    reason=reason,
-                    risk_level=risk,
-                )
-                tool_output = json.dumps({
-                    "status": "pending_human_approval",
-                    "approval_id": approval_id,
-                    "message": f"Action paused: {reason} Awaiting human confirmation."
-                })
-            else:
-                # Allowed: execute tool
-                tool_output = _tool_registry.execute(func_name, raw_args)
-
+                pending_approval_details = exec_res
+                tool_output = json.dumps(exec_res)
+            elif exec_res.get("status") == "success":
+                tool_output = exec_res.get("result", "")
                 # Extract citations if search or RAG tool
                 try:
                     out_json = json.loads(tool_output)
@@ -792,6 +793,8 @@ async def run_agent_workflow(
                                 citations.append(r["citation"])
                 except Exception:
                     pass
+            else:
+                tool_output = json.dumps(exec_res)
 
             messages.append({
                 "role": "tool",

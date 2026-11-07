@@ -626,6 +626,58 @@ class TaskRepository:
             timestamp=now,
         )
 
+    def list_action_events(
+        self,
+        task_id: Optional[str] = None,
+        action_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[ActionEvent]:
+        """Lists chronological action audit events."""
+        query = "SELECT * FROM action_events WHERE 1=1"
+        params: List[Any] = []
+        if task_id:
+            query += " AND task_id = ?"
+            params.append(task_id)
+        if action_id:
+            query += " AND action_id = ?"
+            params.append(action_id)
+        query += " ORDER BY id DESC LIMIT ?;"
+        params.append(limit)
+
+        with self.db.connection() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+            events = []
+            for r in rows:
+                try:
+                    payload = json.loads(r["event_payload"] or "{}")
+                except Exception:
+                    payload = {}
+                try:
+                    err = json.loads(r["error_details"]) if r["error_details"] else None
+                except Exception:
+                    err = None
+                events.append(
+                    ActionEvent(
+                        id=r["id"],
+                        action_id=r["action_id"],
+                        task_id=r["task_id"],
+                        approval_id=r["approval_id"],
+                        event_type=r["event_type"],
+                        tool_name=r["tool_name"],
+                        action_type=r["action_type"],
+                        target_resource=r["target_resource"],
+                        parameter_fingerprint=r["parameter_fingerprint"],
+                        policy_decision=r["policy_decision"],
+                        risk_level=r["risk_level"],
+                        result_summary=r["result_summary"],
+                        error_details=err,
+                        event_payload=payload,
+                        request_id=r["request_id"],
+                        timestamp=r["timestamp"],
+                    )
+                )
+            return events
+
     # --------------------------------------------------------------------------
     # Deserialization Helpers
     # --------------------------------------------------------------------------
