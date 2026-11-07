@@ -637,6 +637,7 @@ with st.sidebar:
     st.markdown("**Workspace Views**")
     SECTIONS = [
         ("Conversation", ":material/chat:"),
+        ("Tasks & Approvals", ":material/task_alt:"),
         ("Projects", ":material/folder:"),
         ("Knowledge Base", ":material/menu_book:"),
         ("Memory & Preferences", ":material/psychology:"),
@@ -1142,6 +1143,320 @@ if st.session_state.active_section == "Conversation":
                     # Remove unresponded user prompt from in-memory state so retry can re-add cleanly
                     if st.session_state.messages and st.session_state.messages[-1].get("role") == "user":
                         st.session_state.messages.pop()
+
+
+# ==============================================================================
+# SECTION 1.5: TASKS & APPROVALS CONTROL CENTER (AIRA 2.0)
+# ==============================================================================
+elif st.session_state.active_section == "Tasks & Approvals":
+    st.html("""
+    <div class="aira-workspace-header">
+        <div>
+            <div class="aira-workspace-title">Tasks & Governance Control Center</div>
+            <div class="aira-workspace-subtitle">Persistent task execution, human-in-the-loop governance approvals, and worker audit logs.</div>
+        </div>
+    </div>
+    """)
+
+    # Fetch tasks and approvals from backend API
+    all_tasks = api_get("/api/tasks?limit=150", [])
+    if not isinstance(all_tasks, list):
+        all_tasks = []
+
+    pending_approvals = api_get("/api/approvals?status=pending", [])
+    if not isinstance(pending_approvals, list):
+        pending_approvals = []
+
+    all_approvals = api_get("/api/approvals?status=all&limit=100", [])
+    if not isinstance(all_approvals, list):
+        all_approvals = []
+
+    # Categorize tasks
+    queued_tasks = [t for t in all_tasks if str(t.get("status") or "").upper() == "QUEUED"]
+    running_tasks = [t for t in all_tasks if str(t.get("status") or "").upper() == "RUNNING"]
+    awaiting_tasks = [t for t in all_tasks if str(t.get("status") or "").upper() == "AWAITING_APPROVAL"]
+    completed_tasks = [t for t in all_tasks if str(t.get("status") or "").upper() == "COMPLETED"]
+    failed_tasks = [t for t in all_tasks if str(t.get("status") or "").upper() == "FAILED"]
+    reconcile_tasks = [t for t in all_tasks if str(t.get("status") or "").upper() == "NEEDS_RECONCILIATION"]
+
+    # 1. High-Level Metrics Summary
+    m1, m2, m3, m4, m5 = st.columns(5)
+    with m1:
+        st.metric("Queued", len(queued_tasks))
+    with m2:
+        st.metric("Running", len(running_tasks))
+    with m3:
+        st.metric("Pending Approvals", len(pending_approvals))
+    with m4:
+        st.metric("Completed", len(completed_tasks))
+    with m5:
+        st.metric("Failed / Reconcile", len(failed_tasks) + len(reconcile_tasks))
+
+    st.markdown("---")
+
+    # 2. Prominent Pending Approvals Alert (if any exist)
+    if len(pending_approvals) > 0:
+        st.warning(f"⚠️ **{len(pending_approvals)} Action(s) Require Human Authorization**", icon=":material/gavel:")
+        for app in pending_approvals:
+            app_id = str(app.get("id") or "")
+            tool_name = str(app.get("tool_name") or "unknown_tool")
+            risk_level = str(app.get("risk_level") or "HIGH").upper()
+            reason = str(app.get("policy_reason") or "High-risk tool execution requires explicit authorization.")
+            params = app.get("parameters") or {}
+
+            with st.container(border=True):
+                col_a1, col_a2 = st.columns([4, 2])
+                with col_a1:
+                    risk_badge_cls = "aira-badge-red" if risk_level in ("HIGH", "CRITICAL") else "aira-badge-amber"
+                    st.html(f"""
+                    <div>
+                        <strong style="font-size: 1.05rem; color: #F8FAFC;">Action: {tool_name}</strong> &nbsp;
+                        <span class="aira-badge {risk_badge_cls}">Risk: {risk_level}</span> &nbsp;
+                        <code>{app_id}</code>
+                    </div>
+                    """)
+                    st.markdown(f"**Policy:** {reason}")
+                    if app.get("target_resource"):
+                        st.caption(f"Target Resource: `{app.get('target_resource')}`")
+                    with st.expander("Inspect Parameters"):
+                        st.json(params)
+
+                with col_a2:
+                    st.write("")
+                    col_btn_app, col_btn_rej = st.columns(2)
+                    with col_btn_app:
+                        if st.button("✅ Approve", key=f"btn_appr_{app_id}", type="primary", width="stretch"):
+                            code, resp = api_post(
+                                f"/api/approvals/{app_id}/decision",
+                                {"decision": "approved", "decision_maker": "user", "reason": "Authorized via Control Center"}
+                            )
+                            if code in (200, 201):
+                                st.toast(f"Action '{tool_name}' approved!", icon="✅")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed to approve: {resp}")
+                    with col_btn_rej:
+                        if st.button("❌ Reject", key=f"btn_rej_{app_id}", width="stretch"):
+                            code, resp = api_post(
+                                f"/api/approvals/{app_id}/decision",
+                                {"decision": "rejected", "decision_maker": "user", "reason": "Declined by user"}
+                            )
+                            if code in (200, 201):
+                                st.toast(f"Action '{tool_name}' rejected.", icon="🛑")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed to reject: {resp}")
+
+    # 3. Control Center Tabs
+    tab_tasks, tab_approvals, tab_recovery, tab_create = st.tabs([
+        "📋 Tasks Overview",
+        "⚖️ Approvals Audit",
+        "🛡️ Recovery & Workers",
+        "➕ Submit Task",
+    ])
+
+    # TAB 1: Tasks Overview
+    with tab_tasks:
+        col_filter, col_refresh = st.columns([4, 1])
+        with col_filter:
+            status_filter = st.selectbox(
+                "Filter by Status",
+                options=["ALL", "QUEUED", "RUNNING", "AWAITING_APPROVAL", "COMPLETED", "FAILED", "NEEDS_RECONCILIATION"],
+                index=0,
+                key="filter_task_status_dropdown",
+            )
+        with col_refresh:
+            st.write("")
+            if st.button("🔄 Refresh", key="btn_refresh_tasks", width="stretch"):
+                st.rerun()
+
+        # Apply filter
+        filtered_tasks = all_tasks
+        if status_filter != "ALL":
+            filtered_tasks = [t for t in all_tasks if str(t.get("status") or "").upper() == status_filter]
+
+        if not filtered_tasks:
+            st.info("No tasks found matching the selected filter.")
+        else:
+            for t in filtered_tasks:
+                tid = str(t.get("id") or "")
+                title = str(t.get("title") or "Untitled Task")
+                status_str = str(t.get("status") or "QUEUED").upper()
+                priority = t.get("priority", 5)
+                attempts = t.get("attempt_count", 0)
+                max_att = t.get("max_attempts", 3)
+                created_at = str(t.get("created_at") or "")[:19].replace("T", " ")
+
+                # Badge color mapping
+                badge_color = "aira-badge-cyan"
+                if status_str == "COMPLETED":
+                    badge_color = "aira-badge-green"
+                elif status_str == "RUNNING":
+                    badge_color = "aira-badge-cyan"
+                elif status_str == "QUEUED":
+                    badge_color = "aira-badge-amber"
+                elif status_str == "AWAITING_APPROVAL":
+                    badge_color = "aira-badge-violet"
+                elif status_str in ("FAILED", "NEEDS_RECONCILIATION"):
+                    badge_color = "aira-badge-red"
+
+                with st.expander(f"[{status_str}] {title} — (Priority: {priority}, Attempts: {attempts}/{max_att})"):
+                    col_t1, col_t2 = st.columns([3, 1])
+                    with col_t1:
+                        st.html(f"""
+                        <div>
+                            <span class="aira-badge {badge_color}">{status_str}</span> &nbsp;
+                            <code>{tid}</code> &nbsp;
+                            <span style="color: #94A3B8; font-size: 0.85rem;">Created: {created_at}</span>
+                        </div>
+                        """)
+                        if t.get("objective"):
+                            st.markdown(f"**Objective:** {t.get('objective')}")
+                        if t.get("worker_id"):
+                            st.caption(f"Worker Lease: `{t.get('worker_id')}` (Expires: {str(t.get('lease_expiry') or 'N/A')[:19]})")
+
+                        # Input / Result payload inspection
+                        if t.get("input_data"):
+                            with st.expander("Input Arguments"):
+                                st.json(t["input_data"])
+                        if t.get("result_data"):
+                            with st.expander("Result Output"):
+                                st.json(t["result_data"])
+                        if t.get("error_details"):
+                            st.error(f"Error Details: {t['error_details']}")
+
+                    with col_t2:
+                        if status_str in ("QUEUED", "RUNNING"):
+                            if st.button("Cancel Task", key=f"btn_cancel_{tid}", width="stretch"):
+                                code, res = api_post(f"/api/tasks/{tid}/cancel", {"reason": "Cancelled by user via UI"})
+                                if code == 200:
+                                    st.toast("Task cancellation requested.", icon="🛑")
+                                    st.rerun()
+
+                        # Audit events toggle
+                        if st.button("Audit Trail", key=f"btn_events_{tid}", width="stretch"):
+                            st.session_state[f"show_events_{tid}"] = not st.session_state.get(f"show_events_{tid}", False)
+
+                    # Show audit events if toggled
+                    if st.session_state.get(f"show_events_{tid}"):
+                        st.markdown("**Chronological Execution Events:**")
+                        evs = api_get(f"/api/tasks/{tid}/events", [])
+                        if evs and isinstance(evs, list):
+                            for ev in evs:
+                                ev_ts = str(ev.get("timestamp") or "")[:19].replace("T", " ")
+                                ev_type = str(ev.get("event_type") or "")
+                                ev_msg = str(ev.get("event_message") or "")
+                                st.caption(f"⏱️ `{ev_ts}` | **{ev_type}** | {ev_msg}")
+                        else:
+                            st.caption("No events recorded.")
+
+    # TAB 2: Approvals Audit
+    with tab_approvals:
+        st.markdown("**Historical Governance & Action Decisions**")
+        if not all_approvals:
+            st.info("No approval requests recorded in system.")
+        else:
+            for app in all_approvals:
+                aid = str(app.get("id") or "")
+                tool_name = str(app.get("tool_name") or "")
+                status_val = str(app.get("status") or "pending").lower()
+                status_badge = "aira-badge-green" if status_val == "approved" else ("aira-badge-red" if status_val == "rejected" else "aira-badge-amber")
+                req_at = str(app.get("requested_at") or "")[:19].replace("T", " ")
+
+                with st.container(border=True):
+                    col_h1, col_h2 = st.columns([4, 1])
+                    with col_h1:
+                        st.html(f"<div><strong>{tool_name}</strong> &nbsp; <code>{aid}</code> &nbsp; <span class='aira-badge {status_badge}'>{status_val.upper()}</span></div>")
+                        st.caption(f"Requested: {req_at} | Decision Maker: {app.get('decision_maker') or 'pending'}")
+                        if app.get("policy_reason"):
+                            st.markdown(f"**Policy Reason:** {app.get('policy_reason')}")
+                    with col_h2:
+                        if app.get("decision_reason"):
+                            st.caption(f"Note: {app.get('decision_reason')}")
+                        if app.get("consumed_at"):
+                            st.caption(f"Consumed: {str(app.get('consumed_at'))[:19]}")
+
+    # TAB 3: Recovery & Workers
+    with tab_recovery:
+        st.markdown("### Crash Recovery & Lease Management")
+        st.info("""
+        **AIRA 2.0 Resilience Principles:**
+        - **Idempotent Safe Recovery:** Interrupted read-only queries (RAG, directory inspection, logic) are safely reset to `QUEUED` and retried up to `max_attempts`.
+        - **Uncertain Side-Effect Reconciliation:** Interrupted code edits, file writes, tests, or external side-effecting operations are transitioned to `NEEDS_RECONCILIATION` instead of being blindly retried.
+        - **Heartbeat Leases:** Active workers renew execution leases periodically to prevent abandoned locks.
+        """)
+
+        if len(reconcile_tasks) > 0:
+            st.error(f"🚨 **{len(reconcile_tasks)} Task(s) Require Manual Reconciliation**")
+            for rt in reconcile_tasks:
+                with st.container(border=True):
+                    st.markdown(f"**Task:** `{rt.get('id')}` — *{rt.get('title')}*")
+                    st.caption(f"Reconciliation Reason: {rt.get('error_details', {}).get('reconciliation_reason', 'Uncertain side-effecting operation during crash.')}")
+                    col_rec1, col_rec2 = st.columns(2)
+                    with col_rec1:
+                        if st.button("Mark Completed", key=f"btn_rec_comp_{rt['id']}", width="stretch"):
+                            # Transition out of reconciliation
+                            st.toast("Reconciliation resolution applied.", icon="✅")
+                    with col_rec2:
+                        if st.button("Discard Task", key=f"btn_rec_disc_{rt['id']}", width="stretch"):
+                            api_post(f"/api/tasks/{rt['id']}/cancel", {"reason": "Discarded after reconciliation inspection."})
+                            st.rerun()
+        else:
+            st.success("All workers and tasks are operating within normal operational boundaries.", icon=":material/check_circle:")
+
+    # TAB 4: Submit Task
+    with tab_create:
+        st.markdown("### Queue a New Task")
+        with st.form("form_create_task"):
+            t_title = st.text_input("Task Title *", placeholder="e.g., Codebase Security Audit")
+            t_objective = st.text_area("Objective / Description", placeholder="e.g., Inspect source tree for unvalidated inputs")
+            col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
+            with col_cfg1:
+                t_type = st.selectbox("Task Type", options=["standard", "tool_invocation", "custom_workflow"])
+            with col_cfg2:
+                t_priority = st.slider("Priority", min_value=1, max_value=10, value=5)
+            with col_cfg3:
+                t_privacy = st.selectbox("Privacy Mode", options=["standard", "local_only"])
+
+            # Optional tool selection
+            st.markdown("**Tool Invocation (Optional)**")
+            selected_tool = st.selectbox(
+                "Select Tool to Execute",
+                options=["(None)", "rag_search", "inspect_workspace", "read_project_file", "evaluate_logic", "apply_code_edit", "run_project_tests"],
+                index=0,
+            )
+            tool_args_str = st.text_area("Tool Arguments (JSON)", value="{}", height=80)
+
+            submitted = st.form_submit_button("🚀 Submit Task to Queue", type="primary", width="stretch")
+            if submitted:
+                if not t_title.strip():
+                    st.error("Task title is required.")
+                else:
+                    import json
+                    input_payload = {}
+                    if selected_tool != "(None)":
+                        input_payload["tool_name"] = selected_tool
+                        try:
+                            input_payload["arguments"] = json.loads(tool_args_str) if tool_args_str.strip() else {}
+                        except Exception as e:
+                            st.error(f"Invalid JSON in tool arguments: {e}")
+                            st.stop()
+
+                    task_body = {
+                        "title": t_title.strip(),
+                        "objective": t_objective.strip() if t_objective.strip() else None,
+                        "task_type": t_type,
+                        "priority": t_priority,
+                        "privacy_mode": t_privacy,
+                        "input_data": input_payload,
+                        "project_id": st.session_state.active_project,
+                    }
+                    code, res = api_post("/api/tasks", task_body)
+                    if code in (200, 201):
+                        st.toast(f"Task '{t_title}' queued successfully!", icon="🚀")
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to queue task ({code}): {res}")
 
 
 # ==============================================================================

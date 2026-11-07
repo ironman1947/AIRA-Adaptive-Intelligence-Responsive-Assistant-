@@ -45,12 +45,14 @@ from src.security.policy import PolicyDecisionEngine
 from src.tools.registry import ToolRegistry
 from src.tools.executor import ControlledToolExecutor
 from src.tasks.repository import TaskRepository
+from src.tasks.manager import TaskManager
 from src.rag.store import get_rag_store
 from src.knowledge.engine import UnifiedKnowledgeEngine, KnowledgeBundle
 
 # Shared singleton components
 _repo = MemoryRepository(get_db_manager())
 _task_repo = TaskRepository(get_db_manager())
+_task_mgr = TaskManager(_task_repo)
 _user_profile_mgr = UserProfileManager(_repo)
 _project_mgr = ProjectContextManager(_repo)
 _session_mgr = SessionContinuityEngine(_repo)
@@ -76,6 +78,9 @@ def get_shared_tool_executor() -> ControlledToolExecutor:
 
 def get_shared_task_repository() -> TaskRepository:
     return _task_repo
+
+def get_shared_task_manager() -> TaskManager:
+    return _task_mgr
 
 def _save_turn(sess_id: str, prompt: str, result_text: str, engine: Optional[str] = None, model: Optional[str] = None):
     """Persists a user-assistant conversation turn in SQLite."""

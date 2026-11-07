@@ -5,18 +5,22 @@ heartbeats, retry limits, cooperative cancellation, concurrency management,
 and crash recovery with uncertain side-effect reconciliation.
 """
 
+from __future__ import annotations
+
 import logging
 import threading
 import time
 import traceback
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional, Callable, List
+from typing import Dict, Any, Optional, Callable, List, TYPE_CHECKING
 
 from src.tasks.models import Task, TaskStatus, utc_now_iso
 from src.tasks.repository import TaskRepository
 from src.tasks.lifecycle import validate_transition
-from src.tools.executor import ControlledToolExecutor
+
+if TYPE_CHECKING:
+    from src.tools.executor import ControlledToolExecutor
 
 logger = logging.getLogger("aira.tasks.worker")
 

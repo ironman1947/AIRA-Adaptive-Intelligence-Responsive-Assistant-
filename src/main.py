@@ -21,10 +21,23 @@ from src.agent.core import (
     get_shared_project_manager,
     get_shared_user_profile_manager,
     get_shared_knowledge_engine,
+    get_shared_task_repository,
+    get_shared_task_manager,
 )
 from src.agent.identity import AiraRuntimeState, ASSISTANT_NAME, VERSION
 from src.agent.router import check_local_health, check_cloud_health, determine_complexity
 from src.memory.models import ProjectWorkspace, FeedbackRecord
+from src.tasks.models import (
+    Task,
+    TaskStatus,
+    TaskEvent,
+    TaskCreateRequest,
+    TaskCancelRequest,
+    ApprovalRequest,
+    ApprovalStatus,
+    ApprovalDecisionRequest,
+)
+from src.tasks.worker import TaskRecoveryManager
 from src.rag.store import get_rag_store
 from src.security.constitution import PRINCIPLES, CONSTITUTION_VERSION
 from src.evaluation.feedback import FeedbackService
@@ -106,6 +119,18 @@ rag_store = get_rag_store()
 feedback_service = FeedbackService(repo)
 voice_service = get_voice_service()
 knowledge_engine = get_shared_knowledge_engine()
+task_repo = get_shared_task_repository()
+task_mgr = get_shared_task_manager()
+recovery_mgr = TaskRecoveryManager(task_repo)
+
+
+@app.on_event("startup")
+async def on_startup():
+    try:
+        stats = recovery_mgr.recover_on_startup()
+        logger.info("AIRA 2.0 Task Recovery completed on startup: %s", stats)
+    except Exception as e:
+        logger.error("AIRA 2.0 Task Recovery encountered error on startup: %s", e, exc_info=True)
 
 class AgentRequest(BaseModel):
     prompt: str
@@ -520,12 +545,140 @@ async def get_constitution():
 async def get_audit_logs(limit: int = 50):
     return repo.list_audit_logs(limit=limit)
 
+# ------------------------------------------------------------------------------
+# AIRA 2.0 Tasks Management Endpoints
+# ------------------------------------------------------------------------------
+@app.post("/api/tasks", status_code=201)
+async def create_task(req: TaskCreateRequest):
+    """Creates a new persistent task in QUEUED state."""
+    try:
+        task = task_mgr.create_task(
+            title=req.title,
+            objective=req.objective,
+            task_type=req.task_type,
+            conversation_id=req.conversation_id,
+            project_id=req.project_id,
+            priority=req.priority,
+            privacy_mode=req.privacy_mode,
+            input_data=req.input_data,
+            idempotency_key=req.idempotency_key,
+            max_attempts=req.max_attempts,
+        )
+        return task.model_dump()
+    except Exception as e:
+        logger.error("Failed to create task: %s", e, exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to create task: {str(e)}")
+
+
+@app.get("/api/tasks")
+async def list_tasks(
+    status: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Lists tasks with optional status and workspace filtering and pagination."""
+    task_status = None
+    if status:
+        try:
+            task_status = TaskStatus(status.upper())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid task status: '{status}'")
+
+    tasks = task_mgr.list_tasks(
+        status=task_status,
+        conversation_id=conversation_id,
+        project_id=project_id,
+        limit=min(limit, 200),
+        offset=max(offset, 0),
+    )
+    return [t.model_dump() for t in tasks]
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task(task_id: str):
+    """Retrieves a single task by ID."""
+    task = task_mgr.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task.model_dump()
+
+
+@app.get("/api/tasks/{task_id}/events")
+async def get_task_events(task_id: str, limit: int = 100):
+    """Retrieves the chronological audit event log for a task."""
+    task = task_mgr.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    events = task_mgr.get_task_events(task_id, limit=min(limit, 500))
+    return [e.model_dump() for e in events]
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str, req: Optional[TaskCancelRequest] = None):
+    """Requests cooperative cancellation of an active task, or cancels a queued task."""
+    reason = req.reason if (req and req.reason) else "User requested cancellation"
+    task = task_mgr.cancel_task(task_id, reason=reason)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task.model_dump()
+
+
+# ------------------------------------------------------------------------------
+# AIRA 2.0 Governance and Persistent Approvals Endpoints
+# ------------------------------------------------------------------------------
 @app.get("/api/approvals")
-async def get_pending_approvals():
-    return list(policy_engine.pending_approvals.values())
+async def get_approvals(
+    status: Optional[str] = "pending",
+    task_id: Optional[str] = None,
+    limit: int = 50,
+):
+    """Lists approval requests from persistent repository with optional status and task filtering."""
+    req_status = None
+    if status and status.lower() != "all":
+        try:
+            req_status = ApprovalStatus(status.lower())
+        except ValueError:
+            req_status = None
+
+    approvals = task_repo.list_approval_requests(status=req_status, task_id=task_id, limit=limit)
+    if not approvals and (not status or status.lower() == "pending") and policy_engine.pending_approvals:
+        # Fallback to in-memory pending dict if any legacy unmigrated items exist
+        return list(policy_engine.pending_approvals.values())
+    return [a.model_dump() for a in approvals]
+
+
+@app.get("/api/approvals/{approval_id}")
+async def get_approval(approval_id: str):
+    """Retrieves a single approval request by ID."""
+    approval = task_repo.get_approval_request(approval_id)
+    if not approval:
+        in_mem = policy_engine.pending_approvals.get(approval_id)
+        if in_mem:
+            return in_mem
+        raise HTTPException(status_code=404, detail="Approval request not found")
+    return approval.model_dump()
+
+
+@app.post("/api/approvals/{approval_id}/decision")
+async def decide_approval(approval_id: str, req: ApprovalDecisionRequest):
+    """Resolves an approval decision (approved or rejected) with decision maker and reason."""
+    approved = req.decision.strip().lower() in ("approved", "approve", "allow", "yes", "true")
+    res = policy_engine.resolve_approval(
+        approval_id=approval_id,
+        approved=approved,
+        decision_maker=req.decision_maker or "user",
+        reason=req.reason,
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+    return res
+
 
 @app.post("/api/approvals/resolve")
 async def resolve_approval(req: ApprovalActionRequest):
+    """Backward-compatible approval resolution endpoint."""
     res = policy_engine.resolve_approval(req.approval_id, req.approved)
     if not res:
         raise HTTPException(status_code=404, detail="Approval request not found")
