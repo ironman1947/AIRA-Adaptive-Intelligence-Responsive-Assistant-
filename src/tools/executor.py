@@ -176,6 +176,7 @@ class ControlledToolExecutor:
                 "status": "pending_human_approval",
                 "policy_decision": "REQUIRE_APPROVAL",
                 "approval_id": appr_id,
+                "tool_name": tool_name,
                 "action_id": action_id,
                 "reason": reason,
                 "risk_level": risk,
