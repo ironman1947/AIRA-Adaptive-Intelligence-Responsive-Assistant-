@@ -241,6 +241,9 @@ class DatabaseManager:
     def initialize_schema(self):
         with self.connection() as conn:
             conn.executescript(SCHEMA_SQL)
+        from src.memory.migrations.runner import MigrationRunner
+        runner = MigrationRunner(self.db_path)
+        runner.apply_pending()
 
 # Global database manager instance
 _db_manager = None
