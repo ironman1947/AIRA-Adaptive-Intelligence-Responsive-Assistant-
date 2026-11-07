@@ -20,6 +20,7 @@ from .lifecycle import (
 )
 from .repository import TaskRepository
 from .manager import TaskManager
+from .worker import TaskWorker, WorkerPool, TaskRecoveryManager
 
 __all__ = [
     "Task",
@@ -38,4 +39,7 @@ __all__ = [
     "InvalidStateTransitionError",
     "TaskRepository",
     "TaskManager",
+    "TaskWorker",
+    "WorkerPool",
+    "TaskRecoveryManager",
 ]

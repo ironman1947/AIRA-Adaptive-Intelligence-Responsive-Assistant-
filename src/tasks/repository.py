@@ -167,12 +167,25 @@ class TaskRepository:
         completed_at = current.completed_at
         cancelled_at = current.cancelled_at
 
+        new_worker_id = current.worker_id
+        new_lease_expiry = current.lease_expiry
+        new_heartbeat = current.heartbeat
+
         if new_status == TaskStatus.RUNNING and not started_at:
             started_at = now
         elif new_status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             completed_at = now
+            new_lease_expiry = None
         elif new_status == TaskStatus.CANCELLED:
             cancelled_at = now
+            new_lease_expiry = None
+        elif new_status == TaskStatus.QUEUED:
+            # Requeued: clear worker lease so it can be picked up
+            new_worker_id = None
+            new_lease_expiry = None
+            new_heartbeat = None
+        elif new_status == TaskStatus.NEEDS_RECONCILIATION:
+            new_lease_expiry = None
 
         new_result = result_data if result_data is not None else current.result_data
         new_error = error_details if error_details is not None else current.error_details
@@ -187,6 +200,9 @@ class TaskRepository:
                     started_at = ?,
                     completed_at = ?,
                     cancelled_at = ?,
+                    worker_id = ?,
+                    lease_expiry = ?,
+                    heartbeat = ?,
                     version = version + 1,
                     updated_at = ?
                 WHERE id = ?;
@@ -198,6 +214,9 @@ class TaskRepository:
                     started_at,
                     completed_at,
                     cancelled_at,
+                    new_worker_id,
+                    new_lease_expiry,
+                    new_heartbeat,
                     now,
                     task_id,
                 ),
@@ -311,6 +330,24 @@ class TaskRepository:
                 (now_iso, lease_expiry, now_iso, task_id, worker_id),
             )
             return cursor.rowcount > 0
+
+    def get_running_tasks(self) -> List[Task]:
+        """Returns all tasks currently in RUNNING state."""
+        return self.list_tasks(status=TaskStatus.RUNNING, limit=1000)
+
+    def get_stale_tasks(self, cutoff_iso: Optional[str] = None) -> List[Task]:
+        """Returns RUNNING tasks whose lease has expired before cutoff_iso."""
+        cutoff = cutoff_iso or utc_now_iso()
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM tasks
+                WHERE status = 'RUNNING' AND lease_expiry IS NOT NULL AND lease_expiry < ?
+                ORDER BY created_at ASC;
+                """,
+                (cutoff,),
+            ).fetchall()
+            return [self._row_to_task(r) for r in rows]
 
     def cancel_task(self, task_id: str, reason: str = "User requested cancellation") -> Optional[Task]:
         """Cancels a task if in QUEUED state, or sets CANCEL_REQUESTED if in RUNNING state."""
