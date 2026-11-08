@@ -146,7 +146,8 @@ class UnifiedKnowledgeEngine:
             context_parts.append("\n### Grounded Internet Evidence (Live Web Research):")
             for ws in bundle.web_sources:
                 body = ws.get("full_content") or ws.get("snippet", "")
-                context_parts.append(f"- Source: [{ws['title']}]({ws['url']}) (Retrieved: {ws['retrieved_at'][:19]}):\n  {body[:500]}")
+                retrieved_str = ws.get("retrieved_at", "")[:19] or "Recent"
+                context_parts.append(f"- Source: [{ws.get('title', 'Web Source')}]({ws.get('url', '')}) (Retrieved: {retrieved_str}):\n  {body[:500]}")
 
         if bundle.contradictions:
             context_parts.append("\n### Observed Discrepancies Across Sources:")

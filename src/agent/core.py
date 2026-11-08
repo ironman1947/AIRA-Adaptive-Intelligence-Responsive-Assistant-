@@ -40,6 +40,8 @@ from src.memory.models import EpisodicMemory, SemanticMemory
 from src.context.user_profile import UserProfileManager
 from src.context.project_context import ProjectContextManager
 from src.context.session_continuity import SessionContinuityEngine
+from src.context.manager import UnifiedContextManager
+from src.context.context_models import ContextPackage
 from src.security.audit import AuditService
 from src.security.policy import PolicyDecisionEngine
 from src.tools.registry import ToolRegistry
@@ -72,6 +74,14 @@ _knowledge_engine = UnifiedKnowledgeEngine(
     memory_repo=_repo,
     project_mgr=_project_mgr,
 )
+_context_mgr = UnifiedContextManager(
+    memory_repo=_repo,
+    project_mgr=_project_mgr,
+    session_mgr=_session_mgr,
+)
+
+def get_shared_context_manager() -> UnifiedContextManager:
+    return _context_mgr
 
 def get_shared_tool_executor() -> ControlledToolExecutor:
     return _tool_executor
@@ -82,11 +92,20 @@ def get_shared_task_repository() -> TaskRepository:
 def get_shared_task_manager() -> TaskManager:
     return _task_mgr
 
-def _save_turn(sess_id: str, prompt: str, result_text: str, engine: Optional[str] = None, model: Optional[str] = None):
+def _save_turn(sess_id: str, prompt: str, result_text: str, engine: Optional[str] = None, model: Optional[str] = None, project_id: Optional[str] = None):
     """Persists a user-assistant conversation turn in SQLite."""
     if sess_id and prompt and result_text:
         _repo.add_message(conversation_id=sess_id, role="user", content=prompt)
         _repo.add_message(conversation_id=sess_id, role="assistant", content=result_text, engine=engine, model=model)
+        try:
+            _context_mgr.memory_retriever.extract_and_persist_interaction_memory(
+                prompt=prompt,
+                response=result_text,
+                session_id=sess_id,
+                project_id=project_id,
+            )
+        except Exception:
+            pass
 
 def is_canned_greeting(text: str) -> bool:
     """Checks if model output is an irrelevant canned greeting rather than answering the prompt."""
@@ -425,14 +444,20 @@ async def run_agent_workflow(
             "duration_ms": duration_ms,
         }
 
-    # 3. Intent-Aware Context Retrieval (Retrieve ONLY what is relevant)
+    # 3. Unified Context Retrieval across Personal Memory, Conversations, Projects, RAG, and Web
+    context_package = _context_mgr.assemble_context(
+        prompt=prompt,
+        user_id="default_user",
+        session_id=sess_id,
+        project_id=active_proj_id,
+        privacy_mode=active_privacy,
+        intent=intent,
+    )
+
     profile_summary = _user_profile_mgr.get_profile_prompt_summary(intent.category)
 
-    proj_summary = None
-    session_summary = None
-    if intent.needs_project_context and active_proj_id:
-        proj_summary = _project_mgr.get_project_prompt_summary(active_proj_id)
-        session_summary = _session_mgr.get_latest_session_prompt_context(active_proj_id)
+    proj_summary = context_package.project_summary or (_project_mgr.get_project_prompt_summary(active_proj_id) if (intent.needs_project_context and active_proj_id) else None)
+    session_summary = context_package.session_continuity or (_session_mgr.get_latest_session_prompt_context(active_proj_id) if (intent.needs_project_context and active_proj_id) else None)
 
     # 3.5 Gather Grounded Knowledge across RAG, Web Research, Memory, and Project Context
     knowledge_bundle: Optional[KnowledgeBundle] = None
@@ -474,9 +499,12 @@ async def run_agent_workflow(
             "duration_ms": duration_ms,
         }
 
-    # Query semantic memories ONLY if relevant (not for greetings/casual chit-chat)
-    matched_memories = []
-    if intent.category not in (IntentCategory.GREETING, IntentCategory.CASUAL, IntentCategory.USER_INTRODUCTION):
+    # Query personal memories from context_package, with fallback to semantic memory
+    matched_memories = [
+        f"[{m.category.upper()}] {m.title}: {m.content}"
+        for m in context_package.personal_memories
+    ]
+    if not matched_memories and intent.category not in (IntentCategory.GREETING, IntentCategory.USER_INTRODUCTION):
         prompt_words = prompt.lower().split()
         all_semantic = _repo.get_semantic_memories(project_id=active_proj_id, limit=20)
         matched_memories = [
@@ -484,6 +512,14 @@ async def run_agent_workflow(
             for m in all_semantic
             if any(w in m.subject.lower() or w in m.content.lower() for w in prompt_words if len(w) > 3)
         ][:3]
+
+    # Combine grounded knowledge context from context_package and knowledge_bundle
+    grounded_context_pieces = []
+    if context_package.has_evidence:
+        grounded_context_pieces.append(context_package.format_prompt_context())
+    if knowledge_bundle and knowledge_bundle.prompt_context_text:
+        grounded_context_pieces.append(knowledge_bundle.prompt_context_text)
+    combined_grounded_context = "\n\n".join(grounded_context_pieces) if grounded_context_pieces else None
 
     # 4. Dynamic System Prompt Assembly with Multi-Turn Conversation History
     system_prompt = build_aira_system_prompt(
@@ -495,11 +531,23 @@ async def run_agent_workflow(
         tone_guidance=intent.tone_guidance,
         include_project_context=intent.needs_project_context,
         user_display_name=user_display_name,
-        grounded_knowledge_context=knowledge_bundle.prompt_context_text if knowledge_bundle else None,
+        grounded_knowledge_context=combined_grounded_context,
     )
 
     conv_history = _repo.get_conversation_history(sess_id, limit=20)
     messages = [{"role": "system", "content": system_prompt}]
+
+    # Inject relevant previous conversation excerpts (cross-session continuity)
+    if context_package.conversation_excerpts:
+        prior_notes = [
+            f"[{c.role.title()} in prior session {c.conversation_id}]: {c.content}"
+            for c in context_package.conversation_excerpts
+        ]
+        messages.append({
+            "role": "system",
+            "content": "### Relevant Prior Conversation Excerpts:\n" + "\n".join(prior_notes)
+        })
+
     for hm in conv_history:
         if hm.role in ("user", "assistant"):
             messages.append({"role": hm.role, "content": hm.content})
@@ -507,20 +555,28 @@ async def run_agent_workflow(
 
     # 5. Execution Phase
     executed_tools = []
-    if knowledge_bundle and knowledge_bundle.web_sources:
+    # Web search tool tracking
+    web_sources_all = (knowledge_bundle.web_sources if knowledge_bundle else []) + [
+        {"title": w.title, "url": w.url} for w in context_package.web_research_results
+    ]
+    if web_sources_all:
         executed_tools.append({
             "tool": "web_search",
             "decision": "ALLOW",
             "risk_level": "LOW",
-            "queries": knowledge_bundle.decision.search_queries,
-            "sources_found": len(knowledge_bundle.web_sources),
+            "queries": knowledge_bundle.decision.search_queries if (knowledge_bundle and knowledge_bundle.decision) else [prompt],
+            "sources_found": len(web_sources_all),
         })
-    if knowledge_bundle and knowledge_bundle.rag_chunks:
+    # RAG document search tool tracking
+    rag_chunks_all = (knowledge_bundle.rag_chunks if knowledge_bundle else []) + [
+        {"filename": d.filename, "citation": d.citation, "content": d.content} for d in context_package.document_excerpts
+    ]
+    if rag_chunks_all:
         executed_tools.append({
             "tool": "rag_document_search",
             "decision": "ALLOW",
             "risk_level": "LOW",
-            "chunks_found": len(knowledge_bundle.rag_chunks),
+            "chunks_found": len(rag_chunks_all),
         })
 
     citations = []
@@ -582,6 +638,9 @@ async def run_agent_workflow(
                 if knowledge_bundle:
                     _, valid_cites, _ = knowledge_bundle.validate_answer_citations(result_text)
                     local_citations = list(dict.fromkeys(knowledge_bundle.citations + valid_cites))
+                local_citations = list(dict.fromkeys(local_citations + context_package.get_all_citations()))
+                sources_used_all = list(dict.fromkeys((knowledge_bundle.sources_used if knowledge_bundle else []) + context_package.sources_used))
+                contradictions_all = list(dict.fromkeys((knowledge_bundle.contradictions if knowledge_bundle else []) + context_package.contradictions))
 
                 duration_ms = round((time.time() - start_time) * 1000, 2)
                 tool_names = ", ".join(t["tool"] for t in executed_tools) if executed_tools else "none"
@@ -596,8 +655,8 @@ async def run_agent_workflow(
                     "tools_triggered": bool(executed_tools),
                     "executed_tools": executed_tools,
                     "citations": local_citations,
-                    "sources_used": knowledge_bundle.sources_used if knowledge_bundle else [],
-                    "contradictions": knowledge_bundle.contradictions if knowledge_bundle else [],
+                    "sources_used": sources_used_all,
+                    "contradictions": contradictions_all,
                     "result": result_text,
                     "routing_reason": routing_info["reason"],
                     "runtime_state": runtime_state.to_dict(),
@@ -839,6 +898,9 @@ async def run_agent_workflow(
         if knowledge_bundle:
             _, valid_cites, _ = knowledge_bundle.validate_answer_citations(final_text)
             all_cloud_citations = list(dict.fromkeys(all_cloud_citations + valid_cites))
+        all_cloud_citations = list(dict.fromkeys(all_cloud_citations + context_package.get_all_citations()))
+        cloud_sources_used = list(dict.fromkeys((knowledge_bundle.sources_used if knowledge_bundle else []) + context_package.sources_used))
+        cloud_contradictions = list(dict.fromkeys((knowledge_bundle.contradictions if knowledge_bundle else []) + context_package.contradictions))
 
         duration_ms = round((time.time() - start_time) * 1000, 2)
         tool_names = ", ".join(t["tool"] for t in executed_tools) if executed_tools else "none"
@@ -853,8 +915,8 @@ async def run_agent_workflow(
             "tools_triggered": bool(executed_tools),
             "executed_tools": executed_tools,
             "citations": all_cloud_citations,
-            "sources_used": knowledge_bundle.sources_used if knowledge_bundle else [],
-            "contradictions": knowledge_bundle.contradictions if knowledge_bundle else [],
+            "sources_used": cloud_sources_used,
+            "contradictions": cloud_contradictions,
             "result": final_text,
             "routing_reason": routing_info["reason"],
             "approval_required": approval_needed,
@@ -872,6 +934,9 @@ async def run_agent_workflow(
     if knowledge_bundle:
         _, valid_cites, _ = knowledge_bundle.validate_answer_citations(cloud_answer)
         cloud_direct_citations = list(dict.fromkeys(knowledge_bundle.citations + valid_cites))
+    cloud_direct_citations = list(dict.fromkeys(cloud_direct_citations + context_package.get_all_citations()))
+    direct_sources_used = list(dict.fromkeys((knowledge_bundle.sources_used if knowledge_bundle else []) + context_package.sources_used))
+    direct_contradictions = list(dict.fromkeys((knowledge_bundle.contradictions if knowledge_bundle else []) + context_package.contradictions))
 
     duration_ms = round((time.time() - start_time) * 1000, 2)
     tool_names = ", ".join(t["tool"] for t in executed_tools) if executed_tools else "none"
@@ -886,8 +951,8 @@ async def run_agent_workflow(
         "tools_triggered": bool(executed_tools),
         "executed_tools": executed_tools,
         "citations": cloud_direct_citations,
-        "sources_used": knowledge_bundle.sources_used if knowledge_bundle else [],
-        "contradictions": knowledge_bundle.contradictions if knowledge_bundle else [],
+        "sources_used": direct_sources_used,
+        "contradictions": direct_contradictions,
         "result": cloud_answer,
         "routing_reason": routing_info["reason"],
         "approval_required": False,

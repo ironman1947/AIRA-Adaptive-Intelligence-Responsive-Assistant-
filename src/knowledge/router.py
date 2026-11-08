@@ -70,9 +70,15 @@ class KnowledgeRouter:
         decision = KnowledgeRouteDecision(privacy_mode=privacy_mode)
 
         # 1. Greetings, user introductions, casual chit-chat, or direct system identity queries
+        # Skip external retrieval ONLY if prompt does not contain explicit document, memory, or web triggers
         if intent and intent.category in self.NO_RETRIEVAL_CATEGORIES:
-            decision.reasons.append(f"Casual/conversational intent ({intent.category}); direct response without external retrieval.")
-            return decision
+            is_rag_candidate = any(p.search(clean_lower) for p in self.RAG_TRIGGER_PATTERNS)
+            has_memory_trigger = any(w in clean_lower for w in ["my preference", "remember", "i like", "i prefer", "you recall", "my background", "my name", "what project", "who am i", "my role", "my tech stack"])
+            has_web_trigger = (intent and intent.needs_web_search) or any(p.search(clean_lower) for p in self.WEB_SEARCH_PATTERNS) or bool(re.search(r"https?://\S+", text))
+
+            if not is_rag_candidate and not has_memory_trigger and not has_web_trigger:
+                decision.reasons.append(f"Casual/conversational intent ({intent.category}); direct response without external retrieval.")
+                return decision
 
         # 2. Check for RAG Document triggers
         is_rag_candidate = any(p.search(clean_lower) for p in self.RAG_TRIGGER_PATTERNS)

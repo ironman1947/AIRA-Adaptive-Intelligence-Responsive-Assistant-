@@ -163,9 +163,18 @@ class AiraDesktopCompanion:
 
     is_farewell_phrase = staticmethod(is_farewell_phrase)
 
-    def __init__(self, backend_url: str = BACKEND_API_URL, mode: Optional[str] = None, api_token: Optional[str] = None):
+    def __init__(
+        self,
+        backend_url: str = BACKEND_API_URL,
+        mode: Optional[str] = None,
+        api_token: Optional[str] = None,
+        project_id: Optional[str] = None,
+        privacy_mode: Optional[str] = None,
+    ):
         self.backend_url = backend_url
         self.api_token = api_token or os.getenv("AIRA_API_TOKEN", "") or AIRA_API_TOKEN
+        self.project_id = project_id
+        self.privacy_mode = privacy_mode or "standard"
 
         # Mode resolution: "live" (Gemini Live API) or "chained" (Faster-Whisper -> Orchestrator -> ElevenLabs)
         env_mode = os.getenv("AIRA_VOICE_MODE", "").strip().lower()
@@ -550,14 +559,18 @@ class AiraDesktopCompanion:
 
         # T6: backend request starts
         timer.t6_backend_sent = time.perf_counter()
+        chat_body = {
+            "prompt": transcript,
+            "session_id": self.sm.session_id,
+            "privacy_mode": getattr(self, "privacy_mode", "standard"),
+        }
+        if getattr(self, "project_id", None):
+            chat_body["project_id"] = self.project_id
+
         try:
             resp = requests.post(
                 f"{self.backend_url}/api/chat",
-                json={
-                    "prompt": transcript,
-                    "session_id": self.sm.session_id,
-                    "privacy_mode": "standard",
-                },
+                json=chat_body,
                 headers=self._get_auth_headers(),
                 timeout=35.0,
             )

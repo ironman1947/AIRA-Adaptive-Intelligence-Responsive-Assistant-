@@ -108,15 +108,33 @@ DESKTOP_ACTION_PATTERNS = [
 WEB_RESEARCH_PATTERNS = [
     # Explicit research action commands
     re.compile(r"\b(research(\s+a\s+topic(\s+for\s+me)?)?|do\s+some\s+research(\s+on|\s+into)?|conduct\s+research(\s+on|\s+into)?)\b", re.IGNORECASE),
-    re.compile(r"\b(find(\s+the)?\s+(latest|current|recent)\s+(information|developments|updates|news|sources))\b", re.IGNORECASE),
+    re.compile(r"\b(find(\s+the)?\s+(latest|current|recent|newest)\s+(information|developments|updates|news|sources|papers?))\b", re.IGNORECASE),
     re.compile(r"\b(investigate(\s+the|\s+current|\s+latest)?\s+(best\s+practices|recent|developments|trends|architecture))\b", re.IGNORECASE),
     re.compile(r"\b(compare(\s+the)?\s+recent\s+(developments|trends|approaches|practices))\b", re.IGNORECASE),
     re.compile(r"\b(gather\s+(evidence|sources|references|data\s+on))\b", re.IGNORECASE),
     re.compile(r"\b(summarize(\s+the)?\s+current\s+(technical\s+guidance|best\s+practices|state\s+of))\b", re.IGNORECASE),
     # Web search triggers
     re.compile(r"\b(search\s+(the\s+web|online|internet|for)|look\s+up\s+(online|on\s+the\s+web))\b", re.IGNORECASE),
-    re.compile(r"\b(latest\s+(news|best\s+practices|developments|guidelines|standards)|current\s+news|today'?s\s+news|stock\s+price|current\s+weather|breaking\s+news)\b", re.IGNORECASE),
+    re.compile(r"\b(latest|current|recent|newest|today'?s|breaking)\s+(?:[a-zA-Z0-9_\-]+\s+)?(news|developments?|updates?|trends|papers?|vulnerabilit(?:y|ies)|releases?|guidelines?|standards?)\b", re.IGNORECASE),
+    re.compile(r"\b(what('?s|\s+is|\s+are)\s+(the\s+)?(latest|current|recent|newest))\b", re.IGNORECASE),
     re.compile(r"\b(who\s+won\s+the\s+202[4-9]|current\s+events|happened\s+recently|in\s+the\s+news)\b", re.IGNORECASE),
+    re.compile(r"\b(current\s+weather|stock\s+price|market\s+today)\b", re.IGNORECASE),
+]
+
+DOCUMENT_QUERY_PATTERNS = [
+    re.compile(r"\b(uploaded\s+(?:document|doc|pdf|paper|file|notes)|uploaded\s+file|uploaded\s+pdf|knowledge\s+base)\b", re.IGNORECASE),
+    re.compile(r"\b(in\s+my\s+(?:uploaded\s+)?(?:file|doc|document|pdf|notes)|according\s+to\s+the\s+(?:doc|document|pdf|file|paper|uploaded))\b", re.IGNORECASE),
+    re.compile(r"\b(summarize\s+(?:the\s+)?(?:uploaded\s+)?(?:document|file|paper|pdf|upload))\b", re.IGNORECASE),
+    re.compile(r"\b(what\s+does\s+(?:my|the)\s+(?:uploaded\s+)?(?:document|file|paper|pdf)\s+say)\b", re.IGNORECASE),
+    re.compile(r"\b(compare\s+(?:these|the)\s+(?:two\s+)?(?:documents|files|papers|reports))\b", re.IGNORECASE),
+    re.compile(r"\b(in\s+the\s+(?:uploaded\s+)?(?:document|pdf|file|paper))\b", re.IGNORECASE),
+]
+
+PERSONAL_CONTEXT_PATTERNS = [
+    re.compile(r"\b(what\s+project(\s+am\s+i|\s+is|\s+are\s+we)\s+working\s+on|my\s+active\s+project|current\s+project|what\s+am\s+i\s+building)\b", re.IGNORECASE),
+    re.compile(r"\b(my\s+preference|my\s+favorite|what\s+are\s+my\s+preferences|what\s+do\s+i\s+prefer|i\s+prefer|i\s+like)\b", re.IGNORECASE),
+    re.compile(r"\b(who\s+am\s+i|what('?s|\s+is)\s+my\s+background|what('?s|\s+is)\s+my\s+role|my\s+tech\s+stack)\b", re.IGNORECASE),
+    re.compile(r"\b(what\s+did\s+we\s+decide|what\s+did\s+we\s+discuss|as\s+we\s+discussed|earlier\s+we\s+talked\s+about)\b", re.IGNORECASE),
 ]
 
 CODING_TECHNICAL_PATTERNS = [
@@ -198,6 +216,18 @@ def analyze_conversational_intent(prompt: str, active_project_id: Optional[str] 
                 tone_guidance="Match the user's enthusiasm with warm celebration (e.g. 'That is awesome! Getting it to work after all that effort feels fantastic.'). Offer an optional, relevant next step if they want to continue."
             )
 
+    # 2.15 Check for Web Browser Content Reading / Summarization of URLs
+    url_match = re.search(r"https?://\S+", text)
+    if url_match:
+        content_verbs = ["summariz", "read", "what does", "content", "tell me", "explain", "key points", "extract", "article", "page", "about"]
+        if any(w in clean_lower for w in content_verbs):
+            return ConversationalIntent(
+                category=IntentCategory.WEB_RESEARCH,
+                suggested_complexity="HEAVY",
+                needs_web_search=True,
+                tone_guidance="Read and summarize the web page content thoroughly, grounding answers in the fetched text with citations."
+            )
+
     # 2.2 Check for Explicit URL Opening or YouTube Desktop Actions (priority over coding keywords in URLs)
     for pat in [
         re.compile(r"\b(?:open\s+(?:https?|file)://\S+|open\s+url\s+\S+)\b", re.IGNORECASE),
@@ -231,6 +261,27 @@ def analyze_conversational_intent(prompt: str, active_project_id: Optional[str] 
                 suggested_complexity="HEAVY",
                 needs_coding_tools=True,
                 tone_guidance="Propose and execute authorized desktop operations subject to policy confirmation."
+            )
+
+    # 3.1 Check for Document Query / RAG
+    for pat in DOCUMENT_QUERY_PATTERNS:
+        if pat.search(text):
+            return ConversationalIntent(
+                category=IntentCategory.RAG_DOCUMENT,
+                suggested_complexity="MEDIUM",
+                needs_rag=True,
+                needs_project_context=True if active_project_id else False,
+                tone_guidance="Ground your response strictly in the uploaded document passages with clear section citations."
+            )
+
+    # 3.2 Check for Personal Context / Memory Inquiries
+    for pat in PERSONAL_CONTEXT_PATTERNS:
+        if pat.search(text):
+            return ConversationalIntent(
+                category=IntentCategory.CONTINUATION if ("discuss" in clean_lower or "decide" in clean_lower) else IntentCategory.CASUAL,
+                suggested_complexity="LOW",
+                needs_project_context=True,
+                tone_guidance="Answer accurately using verified personal memory, user preferences, and project facts without claiming you lack access."
             )
 
     # 4. Check for Web Research (Priority over Greetings and Casual)
